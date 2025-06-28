@@ -1,0 +1,25 @@
+*.toc.bak
+*.lua.bak
+
+# WoW addon development
+*.bak
+*.tmp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+*.swp
+*.swo
+
+.claude/*
+
+# Don't track the actual git hooks (they're copied from hooks/ directory)
+.git/hooks/*
+
+# But do track our hook templates
+!hooks/
+# Trigger version update
+# Shorter version names

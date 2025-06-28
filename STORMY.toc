@@ -1,0 +1,33 @@
+## Interface: 110002
+## Title: STORMY - Real-time Personal Damage Tracker
+## Notes: High-performance damage tracking focused on player and pets with minimal overhead
+## Author: You
+## Version: 1.0.0
+## SavedVariables: StormyDB
+## DefaultState: enabled
+## OptionalDeps: Ace3, LibStub
+
+# =============================================================================
+# STORMY - Performance-focused damage tracking addon
+# Architecture: Zero-allocation hot paths, fixed memory footprint
+# =============================================================================
+
+# Core Foundation
+Core/Constants.lua
+Core/TablePool.lua
+Core/TimingManager.lua
+Core/EventBus.lua
+
+# Combat Processing
+Combat/EventProcessor.lua
+Combat/DamageAccumulator.lua
+
+# Entity Tracking
+Tracking/EntityTracker.lua
+Tracking/RingBuffer.lua
+
+# UI Components
+UI/DamageMeter.lua
+
+# Main Initialization
+STORMY.lua
