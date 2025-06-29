@@ -219,6 +219,36 @@ function EntityTracker:IsPet(guid)
     return trackingState.activePets[guid] ~= nil
 end
 
+-- Add pet via combat log flags (for guardians/temporary pets like DK ghouls)
+function EntityTracker:CheckPetByCombatFlags(sourceGUID, sourceName, sourceFlags)
+    if not sourceGUID or not sourceFlags then
+        return false
+    end
+    
+    -- Skip if already tracking
+    if trackingState.activePets[sourceGUID] then
+        return true
+    end
+    
+    -- Combat log flags for pets/guardians
+    local COMBATLOG_OBJECT_TYPE_PET = 0x00001000
+    local COMBATLOG_OBJECT_TYPE_GUARDIAN = 0x00002000
+    local COMBATLOG_OBJECT_AFFILIATION_MINE = 0x00000001
+    
+    -- Check if it's our pet/guardian
+    local isMyPet = bit.band(sourceFlags, COMBATLOG_OBJECT_AFFILIATION_MINE) ~= 0 and
+                    (bit.band(sourceFlags, COMBATLOG_OBJECT_TYPE_PET) ~= 0 or
+                     bit.band(sourceFlags, COMBATLOG_OBJECT_TYPE_GUARDIAN) ~= 0)
+    
+    if isMyPet then
+        local petType = bit.band(sourceFlags, COMBATLOG_OBJECT_TYPE_PET) ~= 0 and "Pet" or "Guardian"
+        self:AddPet(sourceGUID, sourceName or "Unknown", petType)
+        return true
+    end
+    
+    return false
+end
+
 -- Check if a GUID belongs to a tracked guardian
 function EntityTracker:IsGuardian(guid)
     return trackingState.activeGuardians[guid] ~= nil

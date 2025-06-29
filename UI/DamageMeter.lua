@@ -69,7 +69,7 @@ local uiState = {
     lastScaleUpdate = 0,
     lastScaleValue = "1K",
     currentScaleMax = 1000,  -- The actual numeric value of the scale
-    hasScaledOutOfCombat = false,  -- Tracks if we've already scaled once out of combat
+    wasOutOfCombat = true,  -- Tracks combat state transitions
     
     -- Display elements
     activityBar = {},     -- Activity bar segments
@@ -192,6 +192,13 @@ function DamageMeter:CreateDisplayElements(parent, largeFont, mediumFont, smallF
     uiState.peakText:SetText("0 peak")
     uiState.peakText:SetTextColor(unpack(UI_CONFIG.COLOR_TEXT_DIM))
     
+    -- Pet damage indicator
+    uiState.petText = parent:CreateFontString(nil, "OVERLAY")
+    uiState.petText:SetFontObject(smallFont)
+    uiState.petText:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", 20, 10)
+    uiState.petText:SetText("")
+    uiState.petText:SetTextColor(unpack(UI_CONFIG.COLOR_TEXT_SECONDARY))
+    
     -- Time window indicator (bottom right) - make it clickable
     local windowButton = CreateFrame("Button", nil, parent)
     windowButton:SetSize(60, 20)
@@ -293,16 +300,35 @@ end
 
 -- Get intelligent scale based on peak values
 function DamageMeter:GetIntelligentScale()
-    -- Use the higher of recent peak or 75% of session peak as reference
-    local referencePeak = math.max(uiState.recentPeak, uiState.sessionPeak * 0.75)
+    local activityLevel = 0
+    if addon.DamageAccumulator then
+        activityLevel = addon.DamageAccumulator:GetActivityLevel()
+    end
+    
+    -- Different scaling logic based on activity
+    local referencePeak
+    if activityLevel > 0.1 then
+        -- In combat: use recent peak primarily, with session peak as fallback
+        referencePeak = math.max(uiState.recentPeak, uiState.sessionPeak * 0.5)
+    else
+        -- Out of combat: use much lower reference to allow scale to drop
+        -- Use recent peak only, or current value + small buffer
+        referencePeak = math.max(uiState.recentPeak, (uiState.currentValue or 0) * 2)
+        -- But don't go below 10% of session peak to avoid too much jumping
+        local minScale = uiState.sessionPeak * 0.1
+        if minScale > 1000 then
+            referencePeak = math.max(referencePeak, minScale)
+        end
+    end
     
     -- If we have no meaningful peak yet, use current value
     if referencePeak < 1000 then
         referencePeak = math.max(1000, uiState.currentValue or 0)
     end
     
-    -- Add 25% headroom to the reference peak
-    local targetScale = referencePeak * 1.25
+    -- Add headroom based on activity
+    local headroomMultiplier = activityLevel > 0.1 and 1.25 or 1.1
+    local targetScale = referencePeak * headroomMultiplier
     
     -- Round to sensible scale increments
     local scaleValue
@@ -465,22 +491,34 @@ function DamageMeter:UpdateDisplay()
         elseif newScaleValue < uiState.currentScaleMax then
             -- Scale needs to go DOWN
             if activityLevel < 0.1 then
-                -- Out of combat - scale once based on recent peak, then stop
-                if not uiState.hasScaledOutOfCombat and timeSinceLastUpdate > 5 then
-                    shouldUpdateScale = true
+                -- Out of combat - allow more frequent scaling down
+                if timeSinceLastUpdate > 3 then
+                    -- Check if scale difference is significant (more than 20%)
+                    local scaleDifference = (uiState.currentScaleMax - newScaleValue) / uiState.currentScaleMax
+                    if scaleDifference > 0.2 then
+                        shouldUpdateScale = true
+                    elseif timeSinceLastUpdate > 10 then
+                        -- Allow smaller adjustments after 10 seconds
+                        shouldUpdateScale = true
+                    end
                 end
             elseif activityLevel >= 0.1 and timeSinceLastUpdate > 5 then
                 -- In combat: allow scaling down every 5 seconds
                 shouldUpdateScale = true
-                -- Reset out-of-combat flag since we're back in combat
-                uiState.hasScaledOutOfCombat = false
             end
         else
             -- Scale is the same - no update needed unless it's been a while
-            if timeSinceLastUpdate > 60 then
-                -- Refresh every minute regardless
+            if timeSinceLastUpdate > 30 then
+                -- Refresh every 30 seconds regardless
                 shouldUpdateScale = true
             end
+        end
+        
+        -- Reset combat state tracking when entering combat
+        if activityLevel >= 0.1 and uiState.wasOutOfCombat then
+            uiState.wasOutOfCombat = false
+        elseif activityLevel < 0.1 and not uiState.wasOutOfCombat then
+            uiState.wasOutOfCombat = true
         end
         
         if shouldUpdateScale then
@@ -488,11 +526,6 @@ function DamageMeter:UpdateDisplay()
             uiState.currentScaleMax = newScaleValue
             uiState.lastScaleUpdate = now
             uiState.scaleText:SetText(newScaleText .. " scale")
-            
-            -- Mark that we've scaled out of combat if we're out of combat
-            if activityLevel < 0.1 then
-                uiState.hasScaledOutOfCombat = true
-            end
         else
             -- Keep showing the last scale value
             uiState.scaleText:SetText(uiState.lastScaleValue .. " scale")
@@ -521,6 +554,31 @@ function DamageMeter:UpdateDisplay()
         -- Show as "Recent: 123.4K  Peak: 156.7K"
         uiState.peakText:SetText(string.format("Recent: %s%s  Peak: %s%s", 
             recentFormatted, recentUnit, sessionFormatted, sessionUnit))
+    end
+    
+    -- Update pet damage text
+    if uiState.petText and addon.DamageAccumulator then
+        local stats = addon.DamageAccumulator:GetStats()
+        if stats.petDamage > 0 then
+            local petPercent = 0
+            local totalDamage = stats.playerDamage + stats.petDamage
+            if totalDamage > 0 then
+                petPercent = (stats.petDamage / totalDamage) * 100
+            end
+            
+            -- Get window-specific pet data
+            local windowData = addon.DamageAccumulator:GetWindowTotals(uiState.windowSeconds)
+            local windowPetDPS = 0
+            if windowData and windowData.duration > 0 then
+                -- Calculate pet DPS for the window (proportional to overall pet damage ratio)
+                windowPetDPS = windowData.dps * (stats.petDamage / totalDamage)
+            end
+            
+            local petDPSFormatted, _, petUnit = self:FormatNumberWithScale(windowPetDPS)
+            uiState.petText:SetText(string.format("Pet: %s%s (%.1f%%)", petDPSFormatted, petUnit, petPercent))
+        else
+            uiState.petText:SetText("")
+        end
     end
     
     -- Update activity bar based on current DPS vs scale

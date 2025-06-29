@@ -191,8 +191,16 @@ function EventProcessor:ProcessEvent(...)
     local isPlayer, isPet = false, false
     
     if addon.EntityTracker then
+        -- First check if it's the player
         isPlayer = addon.EntityTracker:IsPlayer(sourceGUID)
+        
+        -- Then check if it's a known pet
         isPet = addon.EntityTracker:IsPet(sourceGUID)
+        
+        -- If not recognized yet, check combat flags for pets/guardians (like DK ghouls)
+        if not isPlayer and not isPet and sourceFlags then
+            isPet = addon.EntityTracker:CheckPetByCombatFlags(sourceGUID, sourceName, sourceFlags)
+        end
         
         if not isPlayer and not isPet then
             processingState.ignoredEvents = processingState.ignoredEvents + 1
