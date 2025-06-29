@@ -9,12 +9,6 @@ on:
     #   - "src/**/*.tsx"
     #   - "src/**/*.js"
     #   - "src/**/*.jsx"
-  
-  issues:
-    types: [opened, edited]
-  
-  issue_comment:
-    types: [created, edited]
 
 jobs:
   claude-review:
