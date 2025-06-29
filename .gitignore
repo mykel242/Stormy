@@ -1,9 +1,19 @@
 *.toc.bak
 *.lua.bak
 
+# Testing artifacts
+luacov.report.out
+lint-test.txt
+test-lint.txt
+
 # WoW addon development
 *.bak
 *.tmp
+
+# Testing artifacts
+luacov.report.out
+lint-test.txt
+test-lint.txt
 
 # OS files
 .DS_Store
