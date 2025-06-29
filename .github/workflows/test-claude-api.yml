@@ -1,0 +1,41 @@
+name: Test Claude API Key
+
+on:
+  workflow_dispatch:
+  
+jobs:
+  test-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test API Key
+        run: |
+          if [ -z "${{ secrets.ANTHROPIC_API_KEY }}" ]; then
+            echo "❌ ANTHROPIC_API_KEY is not set"
+            exit 1
+          else
+            echo "✅ ANTHROPIC_API_KEY is configured"
+            echo "Key length: ${#ANTHROPIC_API_KEY}"
+          fi
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          
+      - name: Test API Call
+        run: |
+          response=$(curl -s -w "%{http_code}" -o response.json \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -d '{"model":"claude-3-5-sonnet-20241022","max_tokens":10,"messages":[{"role":"user","content":"test"}]}' \
+            https://api.anthropic.com/v1/messages)
+          
+          echo "HTTP Status: $response"
+          echo "Response:"
+          cat response.json
+          
+          if [ "$response" = "200" ]; then
+            echo "✅ API key is valid"
+          else
+            echo "❌ API call failed"
+            exit 1
+          fi
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
