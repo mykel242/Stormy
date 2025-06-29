@@ -100,8 +100,8 @@ function EventBus:Dispatch(eventType, eventData)
         -- Protected call to prevent one subscriber from breaking others
         local success, err = pcall(subscriber.callback, event)
         if not success then
-            print(string.format("[STORMY EventBus Error] %s subscriber '%s': %s", 
-                eventType, subscriber.name, tostring(err)))
+            -- print(string.format("[STORMY EventBus Error] %s subscriber '%s': %s", 
+            --     eventType, subscriber.name, tostring(err)))
         else
             subscriber.eventCount = subscriber.eventCount + 1
         end

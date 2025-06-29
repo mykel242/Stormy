@@ -523,7 +523,7 @@ function RingBuffer:Initialize()
     self:GetHealingBuffer()
     self:GetEventBuffer()
     
-    print("[STORMY] RingBuffer system initialized with 3 buffers")
+    -- print("[STORMY] RingBuffer system initialized with 3 buffers")
 end
 
 -- Module ready

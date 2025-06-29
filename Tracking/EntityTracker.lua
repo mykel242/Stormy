@@ -67,7 +67,7 @@ function EntityTracker:UpdatePlayer()
         -- Cache the player
         self:CacheEntity(newGUID, newName, "Player")
         
-        print(string.format("[STORMY] Player updated: %s (%s)", newName, newGUID))
+        -- print(string.format("[STORMY] Player updated: %s (%s)", newName, newGUID))
         
         -- Dispatch event
         addon.EventBus:Dispatch("PLAYER_UPDATED", {
@@ -106,7 +106,7 @@ function EntityTracker:AddPet(petGUID, petName, petType)
         trackingState.petsDetected = trackingState.petsDetected + 1
         trackingState.totalEntitiesTracked = trackingState.totalEntitiesTracked + 1
         
-        print(string.format("[STORMY] Pet detected: %s (%s)", petName or "Unknown", petGUID))
+        -- print(string.format("[STORMY] Pet detected: %s (%s)", petName or "Unknown", petGUID))
         
         -- Dispatch event
         addon.EventBus:DispatchPetDetected({
@@ -145,7 +145,7 @@ function EntityTracker:AddGuardian(guardianGUID, guardianName, spellId)
         trackingState.guardiansDetected = trackingState.guardiansDetected + 1
         trackingState.totalEntitiesTracked = trackingState.totalEntitiesTracked + 1
         
-        print(string.format("[STORMY] Guardian detected: %s (%s)", guardianName or "Unknown", guardianGUID))
+        -- print(string.format("[STORMY] Guardian detected: %s (%s)", guardianName or "Unknown", guardianGUID))
         
         -- Dispatch event
         addon.EventBus:Dispatch("GUARDIAN_DETECTED", {
@@ -171,7 +171,7 @@ function EntityTracker:RemovePet(petGUID)
         
         trackingState.activePets[petGUID] = nil
         
-        print(string.format("[STORMY] Pet removed: %s (%s)", pet.name, petGUID))
+        -- print(string.format("[STORMY] Pet removed: %s (%s)", pet.name, petGUID))
         
         -- Dispatch event
         addon.EventBus:Dispatch("PET_REMOVED", {
@@ -191,7 +191,7 @@ function EntityTracker:RemoveGuardian(guardianGUID)
     if guardian then
         trackingState.activeGuardians[guardianGUID] = nil
         
-        print(string.format("[STORMY] Guardian removed: %s (%s)", guardian.name, guardianGUID))
+        -- print(string.format("[STORMY] Guardian removed: %s (%s)", guardian.name, guardianGUID))
         
         -- Dispatch event
         addon.EventBus:Dispatch("GUARDIAN_REMOVED", {
@@ -404,8 +404,8 @@ function EntityTracker:Maintenance()
         trackingState.lastCleanupTime = now
         
         if removedEntities > 0 or clearedCache > 0 then
-            print(string.format("[STORMY] Cleanup: %d entities, %d cache entries", 
-                removedEntities, clearedCache))
+            -- print(string.format("[STORMY] Cleanup: %d entities, %d cache entries", 
+            --     removedEntities, clearedCache))
         end
     end
 end
@@ -595,7 +595,7 @@ function EntityTracker:Initialize()
     self.maintenanceTimer = maintenanceTimer
     self.scanTimer = scanTimer
     
-    print("[STORMY] EntityTracker initialized")
+    -- print("[STORMY] EntityTracker initialized")
 end
 
 -- Module ready

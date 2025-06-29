@@ -1,6 +1,6 @@
 -- DamageMeter.lua
--- Simple damage meter UI for testing STORMY core functionality
--- Basic display with throttled updates
+-- MVP damage meter UI with activity bar and custom typography
+-- Phase 1: Core visual updates with custom font and activity bar
 
 local addonName, addon = ...
 
@@ -13,11 +13,36 @@ local DamageMeter = addon.DamageMeter
 
 -- UI Configuration
 local UI_CONFIG = {
-    WINDOW_WIDTH = 300,
-    WINDOW_HEIGHT = 200,
-    UPDATE_RATE = 500,      -- 2 FPS for testing
-    BACKGROUND_ALPHA = 0.8,
-    FONT_SIZE = 12
+    WINDOW_WIDTH = 380,
+    WINDOW_HEIGHT = 140,
+    UPDATE_RATE = 250,      -- 4 FPS for smooth activity bar
+    BACKGROUND_ALPHA = 0.95,
+    
+    -- Typography
+    FONT_PATH = "Interface\\AddOns\\Stormy\\assets\\SCP-SB.ttf",
+    FONT_SIZE_LARGE = 48,   -- Main DPS number
+    FONT_SIZE_MEDIUM = 14,  -- Scale indicator
+    FONT_SIZE_SMALL = 12,   -- Peak value
+    
+    -- Activity Bar
+    ACTIVITY_SEGMENTS = 20,
+    SEGMENT_WIDTH = 16,
+    SEGMENT_HEIGHT = 8,
+    SEGMENT_SPACING = 2,
+    
+    -- Colors
+    COLOR_BACKGROUND = {0, 0, 0, 0.95},
+    COLOR_TEXT_PRIMARY = {1, 1, 1, 1},
+    COLOR_TEXT_SECONDARY = {0.7, 0.7, 0.7, 1},
+    COLOR_TEXT_DIM = {0.5, 0.5, 0.5, 1},
+    COLOR_DPS = {1, 0.2, 0.2, 1},  -- Red for DPS
+    COLOR_HPS = {0.2, 1, 0.2, 1},  -- Green for HPS
+    
+    -- Activity colors (gradient)
+    COLOR_ACTIVITY_LOW = {0, 0.8, 0, 1},      -- Green
+    COLOR_ACTIVITY_MED = {1, 1, 0, 1},        -- Yellow
+    COLOR_ACTIVITY_HIGH = {1, 0.5, 0, 1},     -- Orange
+    COLOR_ACTIVITY_MAX = {1, 0, 0, 1},        -- Red
 }
 
 -- UI State
@@ -27,14 +52,54 @@ local uiState = {
     lastUpdate = 0,
     updateTimer = nil,
     
+    -- Auto-scaling
+    autoScale = true,
+    currentScale = 1,
+    scaleUnit = "",
+    
+    -- Time window mode
+    windowMode = "CURRENT",  -- CURRENT (5s), SHORT (15s), MEDIUM (30s), LONG (60s)
+    windowSeconds = 5,
+    
+    -- Peak tracking
+    sessionPeak = 0,      -- Never decays (session-wide)
+    recentPeak = 0,       -- Decaying peak (from DamageAccumulator)
+    
+    -- Scale update tracking
+    lastScaleUpdate = 0,
+    lastScaleValue = "1K",
+    currentScaleMax = 1000,  -- The actual numeric value of the scale
+    hasScaledOutOfCombat = false,  -- Tracks if we've already scaled once out of combat
+    
     -- Display elements
-    titleText = nil,
-    currentDPSText = nil,
-    peakDPSText = nil,
-    totalDamageText = nil,
-    activityText = nil,
-    statsText = nil
+    activityBar = {},     -- Activity bar segments
+    mainNumberText = nil,
+    scaleText = nil,
+    peakText = nil,
+    modeText = nil,
+    closeButton = nil,
 }
+
+-- =============================================================================
+-- CUSTOM FONTS
+-- =============================================================================
+
+-- Create custom font objects
+local function CreateCustomFonts()
+    -- Large number font
+    local largeFont = CreateFont("StormyLargeNumberFont")
+    largeFont:SetFont(UI_CONFIG.FONT_PATH, UI_CONFIG.FONT_SIZE_LARGE, "OUTLINE")
+    
+    -- Medium font
+    local mediumFont = CreateFont("StormyMediumFont")
+    mediumFont:SetFont(UI_CONFIG.FONT_PATH, UI_CONFIG.FONT_SIZE_MEDIUM, "OUTLINE")
+    
+    -- Small font
+    local smallFont = CreateFont("StormySmallFont")
+    smallFont:SetFont(UI_CONFIG.FONT_PATH, UI_CONFIG.FONT_SIZE_SMALL, "OUTLINE")
+    
+    return largeFont, mediumFont, smallFont
+end
 
 -- =============================================================================
 -- UI CREATION
@@ -46,30 +111,39 @@ function DamageMeter:CreateMainWindow()
         return uiState.mainFrame
     end
     
-    -- Create main frame
-    local frame = CreateFrame("Frame", "StormyDamageMeter", UIParent, "BasicFrameTemplateWithInset")
+    -- Create custom fonts
+    local largeFont, mediumFont, smallFont = CreateCustomFonts()
+    
+    -- Create main frame (no template for custom look)
+    local frame = CreateFrame("Frame", "StormyDamageMeter", UIParent)
     frame:SetSize(UI_CONFIG.WINDOW_WIDTH, UI_CONFIG.WINDOW_HEIGHT)
     frame:SetPoint("CENTER", 100, 0)
     frame:SetFrameStrata("MEDIUM")
     frame:SetFrameLevel(10)
     
-    -- Set title
-    frame.TitleText:SetText("STORMY Damage Meter")
+    -- Custom background
+    local bg = frame:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(unpack(UI_CONFIG.COLOR_BACKGROUND))
     
     -- Make it movable
     frame:SetMovable(true)
     frame:EnableMouse(true)
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", frame.StartMoving)
-    frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
-    
-    -- Close button
-    frame.CloseButton:SetScript("OnClick", function()
-        self:Hide()
+    frame:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        -- Save position
+        if addon.db then
+            local point, _, relativePoint, x, y = self:GetPoint()
+            addon.db.windowPosition = { point = point, relativePoint = relativePoint, x = x, y = y }
+        end
     end)
     
     -- Create display elements
-    self:CreateDisplayElements(frame)
+    self:CreateActivityBar(frame)
+    self:CreateDisplayElements(frame, largeFont, mediumFont, smallFont)
+    self:CreateCloseButton(frame)
     
     uiState.mainFrame = frame
     frame:Hide() -- Start hidden
@@ -77,55 +151,246 @@ function DamageMeter:CreateMainWindow()
     return frame
 end
 
+-- Create activity bar
+function DamageMeter:CreateActivityBar(parent)
+    local barWidth = UI_CONFIG.ACTIVITY_SEGMENTS * (UI_CONFIG.SEGMENT_WIDTH + UI_CONFIG.SEGMENT_SPACING) - UI_CONFIG.SEGMENT_SPACING
+    local xStart = (UI_CONFIG.WINDOW_WIDTH - barWidth) / 2
+    
+    for i = 1, UI_CONFIG.ACTIVITY_SEGMENTS do
+        local segment = parent:CreateTexture(nil, "ARTWORK")
+        segment:SetSize(UI_CONFIG.SEGMENT_WIDTH, UI_CONFIG.SEGMENT_HEIGHT)
+        
+        local xPos = xStart + (i - 1) * (UI_CONFIG.SEGMENT_WIDTH + UI_CONFIG.SEGMENT_SPACING)
+        segment:SetPoint("TOPLEFT", parent, "TOPLEFT", xPos, -15)
+        
+        segment:SetColorTexture(0.2, 0.2, 0.2, 1) -- Default dark gray
+        
+        uiState.activityBar[i] = segment
+    end
+end
+
 -- Create display text elements
-function DamageMeter:CreateDisplayElements(parent)
-    local yOffset = -40
-    local lineHeight = 20
+function DamageMeter:CreateDisplayElements(parent, largeFont, mediumFont, smallFont)
+    -- Main DPS/HPS number
+    uiState.mainNumberText = parent:CreateFontString(nil, "OVERLAY")
+    uiState.mainNumberText:SetFontObject(largeFont)
+    uiState.mainNumberText:SetPoint("TOPLEFT", parent, "TOPLEFT", 20, -35)
+    uiState.mainNumberText:SetText("0")
+    uiState.mainNumberText:SetTextColor(unpack(UI_CONFIG.COLOR_DPS))
     
-    -- Title/Status
-    uiState.titleText = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    uiState.titleText:SetPoint("TOP", parent, "TOP", 0, yOffset)
-    uiState.titleText:SetText("STORMY v" .. addon.VERSION)
-    yOffset = yOffset - lineHeight
+    -- Scale indicator (e.g., "275K (auto)")
+    uiState.scaleText = parent:CreateFontString(nil, "OVERLAY")
+    uiState.scaleText:SetFontObject(mediumFont)
+    uiState.scaleText:SetPoint("TOPLEFT", parent, "TOPLEFT", 20, -85)
+    uiState.scaleText:SetText("1 (auto)")
+    uiState.scaleText:SetTextColor(unpack(UI_CONFIG.COLOR_TEXT_SECONDARY))
     
-    -- Current DPS
-    uiState.currentDPSText = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    uiState.currentDPSText:SetPoint("TOP", parent, "TOP", 0, yOffset)
-    uiState.currentDPSText:SetText("Current DPS: 0")
-    uiState.currentDPSText:SetTextColor(1.0, 0.8, 0.0) -- Gold
-    yOffset = yOffset - lineHeight - 5
+    -- Peak value
+    uiState.peakText = parent:CreateFontString(nil, "OVERLAY")
+    uiState.peakText:SetFontObject(smallFont)
+    uiState.peakText:SetPoint("TOPLEFT", parent, "TOPLEFT", 20, -105)
+    uiState.peakText:SetText("0 peak")
+    uiState.peakText:SetTextColor(unpack(UI_CONFIG.COLOR_TEXT_DIM))
     
-    -- Peak DPS
-    uiState.peakDPSText = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    uiState.peakDPSText:SetPoint("TOP", parent, "TOP", 0, yOffset)
-    uiState.peakDPSText:SetText("Peak DPS: 0")
-    uiState.peakDPSText:SetTextColor(1.0, 0.4, 0.4) -- Red
-    yOffset = yOffset - lineHeight
+    -- Time window indicator (bottom right) - make it clickable
+    local windowButton = CreateFrame("Button", nil, parent)
+    windowButton:SetSize(60, 20)
+    windowButton:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -15, 10)
+    windowButton:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     
-    -- Total Damage
-    uiState.totalDamageText = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    uiState.totalDamageText:SetPoint("TOP", parent, "TOP", 0, yOffset)
-    uiState.totalDamageText:SetText("Total Damage: 0")
-    uiState.totalDamageText:SetTextColor(0.8, 0.8, 1.0) -- Light blue
-    yOffset = yOffset - lineHeight
+    uiState.modeText = windowButton:CreateFontString(nil, "OVERLAY")
+    uiState.modeText:SetFontObject(smallFont)
+    uiState.modeText:SetAllPoints()
+    uiState.modeText:SetText("5 sec")
+    uiState.modeText:SetTextColor(unpack(UI_CONFIG.COLOR_TEXT_DIM))
     
-    -- Activity indicator
-    uiState.activityText = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    uiState.activityText:SetPoint("TOP", parent, "TOP", 0, yOffset)
-    uiState.activityText:SetText("Activity: Idle")
-    uiState.activityText:SetTextColor(0.6, 0.6, 0.6) -- Gray
-    yOffset = yOffset - lineHeight - 5
+    -- Highlight on hover
+    windowButton:SetScript("OnEnter", function()
+        uiState.modeText:SetTextColor(unpack(UI_CONFIG.COLOR_TEXT_SECONDARY))
+    end)
+    windowButton:SetScript("OnLeave", function()
+        uiState.modeText:SetTextColor(unpack(UI_CONFIG.COLOR_TEXT_DIM))
+    end)
     
-    -- Stats/Debug info
-    uiState.statsText = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    uiState.statsText:SetPoint("TOP", parent, "TOP", 0, yOffset)
-    uiState.statsText:SetText("Events: 0 | Entities: 0")
-    uiState.statsText:SetTextColor(0.7, 0.7, 0.7) -- Light gray
+    -- Click to cycle windows
+    windowButton:SetScript("OnClick", function(self, button)
+        if button == "LeftButton" then
+            DamageMeter:CycleWindowMode(1)
+        else
+            DamageMeter:CycleWindowMode(-1)
+        end
+    end)
+    
+    uiState.windowButton = windowButton
+    
+    -- DPS label (top right)
+    uiState.labelText = parent:CreateFontString(nil, "OVERLAY")
+    uiState.labelText:SetFontObject(mediumFont)
+    uiState.labelText:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -20, -15)
+    uiState.labelText:SetText("DPS")
+    uiState.labelText:SetTextColor(unpack(UI_CONFIG.COLOR_DPS))
+end
+
+-- Create custom close button
+function DamageMeter:CreateCloseButton(parent)
+    local button = CreateFrame("Button", nil, parent)
+    button:SetSize(16, 16)
+    button:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -5, -5)
+    
+    -- X texture
+    button:SetNormalTexture("Interface\\Buttons\\UI-StopButton")
+    button:SetHighlightTexture("Interface\\Buttons\\UI-StopButton")
+    button:GetHighlightTexture():SetAlpha(0.5)
+    
+    button:SetScript("OnClick", function()
+        DamageMeter:Hide()
+    end)
+    
+    uiState.closeButton = button
+end
+
+-- =============================================================================
+-- NUMBER FORMATTING AND SCALING
+-- =============================================================================
+
+-- Format number with auto-scaling
+function DamageMeter:FormatNumberWithScale(value)
+    if not value or value == 0 then
+        return "0", 1, ""
+    end
+    
+    local absValue = math.abs(value)
+    local scale, unit
+    
+    if absValue >= 1000000000 then
+        scale = 1000000000
+        unit = "B"
+    elseif absValue >= 1000000 then
+        scale = 1000000
+        unit = "M"
+    elseif absValue >= 1000 then
+        scale = 1000
+        unit = "K"
+    else
+        scale = 1
+        unit = ""
+    end
+    
+    local scaledValue = value / scale
+    local formatted
+    
+    -- Always format with max 1 decimal place
+    if scaledValue >= 100 then
+        formatted = string.format("%.0f", scaledValue)
+    else
+        formatted = string.format("%.1f", scaledValue)
+        -- Remove trailing .0
+        formatted = formatted:gsub("%.0$", "")
+    end
+    
+    return formatted, scale, unit
+end
+
+-- Get intelligent scale based on peak values
+function DamageMeter:GetIntelligentScale()
+    -- Use the higher of recent peak or 75% of session peak as reference
+    local referencePeak = math.max(uiState.recentPeak, uiState.sessionPeak * 0.75)
+    
+    -- If we have no meaningful peak yet, use current value
+    if referencePeak < 1000 then
+        referencePeak = math.max(1000, uiState.currentValue or 0)
+    end
+    
+    -- Add 25% headroom to the reference peak
+    local targetScale = referencePeak * 1.25
+    
+    -- Round to sensible scale increments
+    local scaleValue
+    if targetScale >= 2000000000 then
+        -- 2B+: round to nearest 500M (2B, 2.5B, 3B, etc.)
+        scaleValue = math.ceil(targetScale / 500000000) * 500000000
+    elseif targetScale >= 1000000000 then
+        -- 1B-2B: round to nearest 250M (1B, 1.25B, 1.5B, 1.75B, 2B)
+        scaleValue = math.ceil(targetScale / 250000000) * 250000000
+    elseif targetScale >= 500000000 then
+        -- 500M-1B: round to nearest 100M (500M, 600M, 700M, 800M, 900M, 1B)
+        scaleValue = math.ceil(targetScale / 100000000) * 100000000
+    elseif targetScale >= 100000000 then
+        -- 100M-500M: round to nearest 50M (100M, 150M, 200M, etc.)
+        scaleValue = math.ceil(targetScale / 50000000) * 50000000
+    elseif targetScale >= 10000000 then
+        -- 10M-100M: round to nearest 10M (10M, 20M, 30M, etc.)
+        scaleValue = math.ceil(targetScale / 10000000) * 10000000
+    elseif targetScale >= 1000000 then
+        -- 1M-10M: round to nearest 1M (1M, 2M, 3M, etc.)
+        scaleValue = math.ceil(targetScale / 1000000) * 1000000
+    elseif targetScale >= 500000 then
+        -- 500K-1M: round to nearest 100K (500K, 600K, 700K, 800K, 900K, 1M)
+        scaleValue = math.ceil(targetScale / 100000) * 100000
+    elseif targetScale >= 100000 then
+        -- 100K-500K: round to nearest 50K (100K, 150K, 200K, etc.)
+        scaleValue = math.ceil(targetScale / 50000) * 50000
+    elseif targetScale >= 10000 then
+        -- 10K-100K: round to nearest 10K (10K, 20K, 30K, etc.)
+        scaleValue = math.ceil(targetScale / 10000) * 10000
+    else
+        -- Under 10K: round to nearest 5K (5K, 10K)
+        scaleValue = math.max(5000, math.ceil(targetScale / 5000) * 5000)
+    end
+    
+    -- Format the scale value
+    local formatted, _, unit = self:FormatNumberWithScale(scaleValue)
+    return formatted .. unit, scaleValue
 end
 
 -- =============================================================================
 -- UI UPDATES
 -- =============================================================================
+
+-- Update activity bar based on current DPS relative to scale
+function DamageMeter:UpdateActivityBar(currentDPS)
+    -- Calculate how full the bar should be based on current DPS vs scale
+    local fillPercent = 0
+    if uiState.currentScaleMax > 0 then
+        fillPercent = math.min(1, currentDPS / uiState.currentScaleMax)
+    end
+    
+    local activeSegments = math.floor(fillPercent * UI_CONFIG.ACTIVITY_SEGMENTS + 0.5)
+    
+    for i = 1, UI_CONFIG.ACTIVITY_SEGMENTS do
+        local segment = uiState.activityBar[i]
+        if i <= activeSegments then
+            -- Calculate color based on position
+            local percent = i / UI_CONFIG.ACTIVITY_SEGMENTS
+            local r, g, b
+            
+            if percent <= 0.33 then
+                -- Green to yellow
+                local t = percent / 0.33
+                r = UI_CONFIG.COLOR_ACTIVITY_LOW[1] + (UI_CONFIG.COLOR_ACTIVITY_MED[1] - UI_CONFIG.COLOR_ACTIVITY_LOW[1]) * t
+                g = UI_CONFIG.COLOR_ACTIVITY_LOW[2] + (UI_CONFIG.COLOR_ACTIVITY_MED[2] - UI_CONFIG.COLOR_ACTIVITY_LOW[2]) * t
+                b = UI_CONFIG.COLOR_ACTIVITY_LOW[3] + (UI_CONFIG.COLOR_ACTIVITY_MED[3] - UI_CONFIG.COLOR_ACTIVITY_LOW[3]) * t
+            elseif percent <= 0.66 then
+                -- Yellow to orange
+                local t = (percent - 0.33) / 0.33
+                r = UI_CONFIG.COLOR_ACTIVITY_MED[1] + (UI_CONFIG.COLOR_ACTIVITY_HIGH[1] - UI_CONFIG.COLOR_ACTIVITY_MED[1]) * t
+                g = UI_CONFIG.COLOR_ACTIVITY_MED[2] + (UI_CONFIG.COLOR_ACTIVITY_HIGH[2] - UI_CONFIG.COLOR_ACTIVITY_MED[2]) * t
+                b = UI_CONFIG.COLOR_ACTIVITY_MED[3] + (UI_CONFIG.COLOR_ACTIVITY_HIGH[3] - UI_CONFIG.COLOR_ACTIVITY_MED[3]) * t
+            else
+                -- Orange to red
+                local t = (percent - 0.66) / 0.34
+                r = UI_CONFIG.COLOR_ACTIVITY_HIGH[1] + (UI_CONFIG.COLOR_ACTIVITY_MAX[1] - UI_CONFIG.COLOR_ACTIVITY_HIGH[1]) * t
+                g = UI_CONFIG.COLOR_ACTIVITY_HIGH[2] + (UI_CONFIG.COLOR_ACTIVITY_MAX[2] - UI_CONFIG.COLOR_ACTIVITY_HIGH[2]) * t
+                b = UI_CONFIG.COLOR_ACTIVITY_HIGH[3] + (UI_CONFIG.COLOR_ACTIVITY_MAX[3] - UI_CONFIG.COLOR_ACTIVITY_HIGH[3]) * t
+            end
+            
+            segment:SetColorTexture(r, g, b, 1)
+        else
+            -- Inactive segment
+            segment:SetColorTexture(0.2, 0.2, 0.2, 1)
+        end
+    end
+end
 
 -- Update display with current data
 function DamageMeter:UpdateDisplay()
@@ -144,76 +409,122 @@ function DamageMeter:UpdateDisplay()
     
     -- Get current damage data
     local displayData = {}
+    local currentValue = 0
+    
     if addon.DamageAccumulator then
+        -- Get raw display data for activity and peaks
         displayData = addon.DamageAccumulator:GetDisplayData()
-    end
-    
-    -- Update current DPS
-    if uiState.currentDPSText then
-        local dpsText = string.format("Current DPS: %s", self:FormatNumber(displayData.currentDPS or 0))
-        uiState.currentDPSText:SetText(dpsText)
-    end
-    
-    -- Update peak DPS
-    if uiState.peakDPSText then
-        local peakText = string.format("Peak DPS: %s", self:FormatNumber(displayData.peakDPS or 0))
-        uiState.peakDPSText:SetText(peakText)
-    end
-    
-    -- Update total damage
-    if uiState.totalDamageText then
-        local totalText = string.format("Total Damage: %s", self:FormatNumber(displayData.totalDamage or 0))
-        uiState.totalDamageText:SetText(totalText)
-    end
-    
-    -- Update activity
-    if uiState.activityText then
-        local activityLevel = displayData.activityLevel or 0
-        local activityText = "Activity: "
         
-        if activityLevel > 0.8 then
-            activityText = activityText .. "High"
-            uiState.activityText:SetTextColor(1.0, 0.4, 0.4) -- Red
-        elseif activityLevel > 0.5 then
-            activityText = activityText .. "Medium"
-            uiState.activityText:SetTextColor(1.0, 0.8, 0.0) -- Yellow
-        elseif activityLevel > 0.1 then
-            activityText = activityText .. "Low"
-            uiState.activityText:SetTextColor(0.4, 1.0, 0.4) -- Green
+        -- Calculate DPS for the selected window
+        local windowData = addon.DamageAccumulator:GetWindowTotals(uiState.windowSeconds)
+        currentValue = windowData and windowData.dps or 0
+    end
+    
+    -- Get peak values
+    local recentPeakValue = displayData.peakDPS or 0  -- This is the decaying peak from DamageAccumulator
+    
+    -- Update peaks and current value
+    uiState.recentPeak = recentPeakValue
+    uiState.currentValue = currentValue
+    if currentValue > uiState.sessionPeak then
+        uiState.sessionPeak = currentValue
+    end
+    
+    -- Format main number with auto-scaling
+    local formatted, scale, unit = self:FormatNumberWithScale(currentValue)
+    uiState.currentScale = scale
+    uiState.scaleUnit = unit
+    
+    -- Update main number
+    if uiState.mainNumberText then
+        -- Split number at decimal point for styling
+        local whole, decimal = formatted:match("^(%d+)%.?(%d*)$")
+        if decimal and decimal ~= "" then
+            uiState.mainNumberText:SetText(whole .. "." .. decimal .. unit)
         else
-            activityText = activityText .. "Idle"
-            uiState.activityText:SetTextColor(0.6, 0.6, 0.6) -- Gray
+            uiState.mainNumberText:SetText(whole .. unit)
         end
-        
-        local activityPercent = math.floor(activityLevel * 100)
-        activityText = activityText .. string.format(" (%d%%)", activityPercent)
-        uiState.activityText:SetText(activityText)
     end
     
-    -- Update stats/debug info
-    if uiState.statsText then
-        local eventStats = ""
-        local entityStats = ""
+    -- Update scale indicator with timing logic
+    if uiState.scaleText then
+        local activityLevel = displayData.activityLevel or 0
+        local timeSinceLastUpdate = now - uiState.lastScaleUpdate
+        local shouldUpdateScale = false
         
-        -- Get event processor stats
-        if addon.EventProcessor then
-            local stats = addon.EventProcessor:GetStats()
-            eventStats = string.format("Events: %d", stats.processedEvents)
+        -- Calculate what the new scale would be
+        local newScaleText, newScaleValue = self:GetIntelligentScale()
+        
+        -- Determine if we should update the scale
+        if uiState.lastScaleUpdate == 0 then
+            -- First time
+            shouldUpdateScale = true
+        elseif newScaleValue > uiState.currentScaleMax then
+            -- Scale needs to go UP - update immediately for better responsiveness
+            shouldUpdateScale = true
+        elseif newScaleValue < uiState.currentScaleMax then
+            -- Scale needs to go DOWN
+            if activityLevel < 0.1 then
+                -- Out of combat - scale once based on recent peak, then stop
+                if not uiState.hasScaledOutOfCombat and timeSinceLastUpdate > 5 then
+                    shouldUpdateScale = true
+                end
+            elseif activityLevel >= 0.1 and timeSinceLastUpdate > 5 then
+                -- In combat: allow scaling down every 5 seconds
+                shouldUpdateScale = true
+                -- Reset out-of-combat flag since we're back in combat
+                uiState.hasScaledOutOfCombat = false
+            end
+        else
+            -- Scale is the same - no update needed unless it's been a while
+            if timeSinceLastUpdate > 60 then
+                -- Refresh every minute regardless
+                shouldUpdateScale = true
+            end
         end
         
-        -- Get entity tracker stats
-        if addon.EntityTracker then
-            local stats = addon.EntityTracker:GetStats()
-            entityStats = string.format("Entities: %d", stats.tracking.activePets)
+        if shouldUpdateScale then
+            uiState.lastScaleValue = newScaleText
+            uiState.currentScaleMax = newScaleValue
+            uiState.lastScaleUpdate = now
+            uiState.scaleText:SetText(newScaleText .. " scale")
+            
+            -- Mark that we've scaled out of combat if we're out of combat
+            if activityLevel < 0.1 then
+                uiState.hasScaledOutOfCombat = true
+            end
+        else
+            -- Keep showing the last scale value
+            uiState.scaleText:SetText(uiState.lastScaleValue .. " scale")
         end
-        
-        local statsText = eventStats
-        if entityStats ~= "" then
-            statsText = statsText .. " | " .. entityStats
-        end
-        
-        uiState.statsText:SetText(statsText)
     end
+    
+    -- Update peak text - show both recent and session peaks
+    if uiState.peakText then
+        local sessionFormatted = "0"
+        local recentFormatted = "0"
+        local sessionUnit = ""
+        local recentUnit = ""
+        
+        if uiState.sessionPeak > 0 then
+            local fmt, _, unit = self:FormatNumberWithScale(uiState.sessionPeak)
+            sessionFormatted = fmt
+            sessionUnit = unit
+        end
+        
+        if uiState.recentPeak > 0 then
+            local fmt, _, unit = self:FormatNumberWithScale(uiState.recentPeak)
+            recentFormatted = fmt
+            recentUnit = unit
+        end
+        
+        -- Show as "Recent: 123.4K  Peak: 156.7K"
+        uiState.peakText:SetText(string.format("Recent: %s%s  Peak: %s%s", 
+            recentFormatted, recentUnit, sessionFormatted, sessionUnit))
+    end
+    
+    -- Update activity bar based on current DPS vs scale
+    self:UpdateActivityBar(currentValue)
 end
 
 -- Start periodic updates
@@ -245,13 +556,21 @@ function DamageMeter:Show()
         self:CreateMainWindow()
     end
     
+    -- Restore position if saved
+    if addon.db and addon.db.windowPosition then
+        self:RestorePosition(addon.db.windowPosition)
+    end
+    
     uiState.mainFrame:Show()
     uiState.isVisible = true
     
     self:StartUpdates()
     self:UpdateDisplay() -- Immediate update
     
-    print("[STORMY] Damage meter shown")
+    -- Save state
+    if addon.db then
+        addon.db.showMainWindow = true
+    end
 end
 
 -- Hide the damage meter
@@ -263,7 +582,10 @@ function DamageMeter:Hide()
     uiState.isVisible = false
     self:StopUpdates()
     
-    print("[STORMY] Damage meter hidden")
+    -- Save state
+    if addon.db then
+        addon.db.showMainWindow = false
+    end
 end
 
 -- Toggle visibility
@@ -273,6 +595,46 @@ function DamageMeter:Toggle()
     else
         self:Show()
     end
+end
+
+-- Cycle through window modes
+function DamageMeter:CycleWindowMode(direction)
+    local modes = {
+        {name = "CURRENT", seconds = 5, label = "5 sec"},
+        {name = "SHORT", seconds = 15, label = "15 sec"},
+        {name = "MEDIUM", seconds = 30, label = "30 sec"},
+        {name = "LONG", seconds = 60, label = "60 sec"}
+    }
+    
+    -- Find current mode index
+    local currentIndex = 1
+    for i, mode in ipairs(modes) do
+        if mode.name == uiState.windowMode then
+            currentIndex = i
+            break
+        end
+    end
+    
+    -- Calculate new index
+    local newIndex = currentIndex + direction
+    if newIndex > #modes then
+        newIndex = 1
+    elseif newIndex < 1 then
+        newIndex = #modes
+    end
+    
+    -- Update state
+    local newMode = modes[newIndex]
+    uiState.windowMode = newMode.name
+    uiState.windowSeconds = newMode.seconds
+    
+    -- Update display
+    if uiState.modeText then
+        uiState.modeText:SetText(newMode.label)
+    end
+    
+    -- Force immediate recalculation
+    self:ForceUpdate()
 end
 
 -- Check if visible
@@ -312,51 +674,13 @@ function DamageMeter:RestorePosition(position)
 end
 
 -- =============================================================================
--- UTILITY FUNCTIONS
--- =============================================================================
-
--- Format numbers for display
-function DamageMeter:FormatNumber(num)
-    if not num or num == 0 then
-        return "0"
-    end
-    
-    if num >= 1000000000 then
-        return string.format("%.1fB", num / 1000000000)
-    elseif num >= 1000000 then
-        return string.format("%.1fM", num / 1000000)
-    elseif num >= 1000 then
-        return string.format("%.1fK", num / 1000)
-    else
-        return tostring(math.floor(num))
-    end
-end
-
--- =============================================================================
 -- DEBUGGING
 -- =============================================================================
-
--- Debug UI state
-function DamageMeter:Debug()
-    print("=== DamageMeter Debug ===")
-    print(string.format("Visible: %s", tostring(uiState.isVisible)))
-    print(string.format("Frame exists: %s", tostring(uiState.mainFrame ~= nil)))
-    print(string.format("Update timer: %s", tostring(uiState.updateTimer ~= nil)))
-    print(string.format("Last update: %.1fs ago", GetTime() - uiState.lastUpdate))
-    
-    if uiState.mainFrame then
-        local position = self:GetPosition()
-        if position then
-            print(string.format("Position: %s %d,%d", position.point, position.x, position.y))
-        end
-    end
-end
 
 -- Force immediate update
 function DamageMeter:ForceUpdate()
     uiState.lastUpdate = 0 -- Reset throttle
     self:UpdateDisplay()
-    print("[STORMY] Display force updated")
 end
 
 -- =============================================================================
@@ -376,7 +700,7 @@ function DamageMeter:Initialize()
         end, "DamageMeterUI")
     end
     
-    print("[STORMY] DamageMeter UI initialized")
+    -- print("[STORMY] DamageMeter UI initialized (Phase 1)")
 end
 
 -- Module ready

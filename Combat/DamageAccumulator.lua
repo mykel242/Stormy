@@ -213,8 +213,8 @@ function DamageAccumulator:GetWindowTotals(windowSeconds)
     if debugCount > 0 and totalDamage > 0 and windowSeconds == 5 then
         local timeSinceLastEvent = now - accumulatorState.lastEventTime
         if timeSinceLastEvent > 10 and accumulatorState.totalEvents < 50 then  -- Only debug early in session
-            print(string.format("[STORMY DEBUG] Window calc: %d total events, %d recent, %.1fs since last event", 
-                debugCount, recentEvents, timeSinceLastEvent))
+            -- print(string.format("[STORMY DEBUG] Window calc: %d total events, %d recent, %.1fs since last event", 
+                -- debugCount, recentEvents, timeSinceLastEvent))
         end
     end
     
@@ -484,7 +484,7 @@ function DamageAccumulator:Reset()
     rollingData.cachedTotals = {}
     rollingData.cacheValid = false
     
-    print("[STORMY] DamageAccumulator reset")
+    -- print("[STORMY] DamageAccumulator reset")
 end
 
 -- Maintenance cleanup (called periodically)

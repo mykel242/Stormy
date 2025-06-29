@@ -71,7 +71,7 @@ local circuitBreaker = {
 local function UpdateCircuitBreaker()
     if Constants and Constants.PERFORMANCE and Constants.PERFORMANCE.MAX_EVENTS_PER_FRAME then
         circuitBreaker.baseLimit = Constants.PERFORMANCE.MAX_EVENTS_PER_FRAME
-        print(string.format("[STORMY] Circuit breaker base limit updated to %d", Constants.PERFORMANCE.MAX_EVENTS_PER_FRAME))
+        -- print(string.format("[STORMY] Circuit breaker base limit updated to %d", Constants.PERFORMANCE.MAX_EVENTS_PER_FRAME))
     end
     -- UpdateAdaptiveLimit will be called separately after it's defined
 end
@@ -111,7 +111,7 @@ local function UpdateAdaptiveLimit()
     
     if newLimit ~= circuitBreaker.maxEventsPerFrame then
         circuitBreaker.maxEventsPerFrame = newLimit
-        print(string.format("[STORMY] Adaptive limit: %s mode, %d events/frame", detectedMode, newLimit))
+        -- print(string.format("[STORMY] Adaptive limit: %s mode, %d events/frame", detectedMode, newLimit))
     end
 end
 
@@ -141,9 +141,9 @@ function EventProcessor:ProcessEvent(...)
     if circuitBreaker.eventsThisFrame > circuitBreaker.maxEventsPerFrame then
         if not circuitBreaker.tripped then
             circuitBreaker.tripped = true
-            -- Only print warning once per second to avoid spam with stats
+            -- Only print warning once per minute to avoid spam
             local now = GetTime()
-            if not circuitBreaker.lastWarning or now - circuitBreaker.lastWarning > 3.0 then
+            if not circuitBreaker.lastWarning or now - circuitBreaker.lastWarning > 60.0 then
                 print(string.format("[STORMY] Circuit breaker: %d events/frame (limit: %d) - Recent events:", 
                     circuitBreaker.eventsThisFrame, circuitBreaker.maxEventsPerFrame))
                 
@@ -301,7 +301,7 @@ function EventProcessor:UpdatePlayerGUID()
         -- Clear pet cache when player changes
         playerCache.pets = {}
         
-        print(string.format("[STORMY] Player updated: %s (%s)", newName, newGUID))
+        -- print(string.format("[STORMY] Player updated: %s (%s)", newName, newGUID))
     end
 end
 
@@ -317,7 +317,7 @@ function EventProcessor:AddPet(petGUID, petName)
             timestamp = GetTime()
         })
         
-        print(string.format("[STORMY] Pet detected: %s (%s)", petName or "Unknown", petGUID))
+        -- print(string.format("[STORMY] Pet detected: %s (%s)", petName or "Unknown", petGUID))
     end
 end
 
@@ -325,7 +325,7 @@ end
 function EventProcessor:RemovePet(petGUID)
     if petGUID and playerCache.pets[petGUID] then
         playerCache.pets[petGUID] = nil
-        print(string.format("[STORMY] Pet removed: %s", petGUID))
+        -- print(string.format("[STORMY] Pet removed: %s", petGUID))
     end
 end
 
@@ -339,7 +339,7 @@ function EventProcessor:ClearPets()
     playerCache.pets = {}
     
     if petCount > 0 then
-        print(string.format("[STORMY] Cleared %d pets", petCount))
+        -- print(string.format("[STORMY] Cleared %d pets", petCount))
     end
 end
 
@@ -523,12 +523,12 @@ function EventProcessor:SetupEventHandlers()
     end)
     
     self.frame = frame
-    print("[STORMY] EventProcessor frame created and events registered")
+    -- print("[STORMY] EventProcessor frame created and events registered")
 end
 
 -- Module ready
 EventProcessor.isReady = true
 
 -- Debug: Print when this file loads
-print("[STORMY] EventProcessor.lua file loaded successfully")
-print("[STORMY] EventProcessor module registered:", addon.EventProcessor ~= nil)
+-- print("[STORMY] EventProcessor.lua file loaded successfully")
+-- print("[STORMY] EventProcessor module registered:", addon.EventProcessor ~= nil)

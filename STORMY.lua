@@ -75,31 +75,31 @@ function addon:OnInitialize()
     self.db = StormyDB
     
     -- Initialize core modules in dependency order
-    print(string.format("[STORMY] Initializing v%s...", self.VERSION))
-    print(string.format("[STORMY] Build: %s", addon._buildHash))
+    -- print(string.format("[STORMY] Initializing v%s...", self.VERSION))
+    -- print(string.format("[STORMY] Build: %s", addon._buildHash))
     
     -- Debug: List available modules
-    print("[STORMY] Available modules:")
+    -- print("[STORMY] Available modules:")
     for k, v in pairs(self) do
         if type(v) == "table" and k ~= "defaults" and k ~= "db" and not k:match("^_") then
-            print(string.format("  - %s: %s", k, type(v)))
+            -- print(string.format("  - %s: %s", k, type(v)))
         end
     end
     
     -- Core foundation
     if self.TablePool then
         self.TablePool:Initialize()
-        print("[STORMY] TablePool initialized")
+        -- print("[STORMY] TablePool initialized")
     end
     
     if self.TimingManager then
         self.TimingManager:Initialize()
-        print("[STORMY] TimingManager initialized")
+        -- print("[STORMY] TimingManager initialized")
     end
     
     if self.EventBus then
         self.EventBus:Initialize()
-        print("[STORMY] EventBus initialized")
+        -- print("[STORMY] EventBus initialized")
     end
     
     -- Combat processing
@@ -108,51 +108,51 @@ function addon:OnInitialize()
             self.EventProcessor:Initialize()
         end)
         if success then
-            print("[STORMY] EventProcessor initialized")
+            -- print("[STORMY] EventProcessor initialized")
         else
-            print("[STORMY] ERROR: EventProcessor initialization failed:", error)
+            -- print("[STORMY] ERROR: EventProcessor initialization failed:", error)
         end
     else
-        print("[STORMY] ERROR: EventProcessor module not found!")
+        -- print("[STORMY] ERROR: EventProcessor module not found!")
     end
     
     -- Data tracking
     if self.EntityTracker then
         self.EntityTracker:Initialize()
-        print("[STORMY] EntityTracker initialized")
+        -- print("[STORMY] EntityTracker initialized")
     else
-        print("[STORMY] EntityTracker not available")
+        -- print("[STORMY] EntityTracker not available")
     end
     
     if self.RingBuffer then
         self.RingBuffer:Initialize()
-        print("[STORMY] RingBuffer initialized")
+        -- print("[STORMY] RingBuffer initialized")
     else
-        print("[STORMY] RingBuffer not available")
+        -- print("[STORMY] RingBuffer not available")
     end
     
     if self.DamageAccumulator then
         self.DamageAccumulator:Initialize()
-        print("[STORMY] DamageAccumulator initialized")
+        -- print("[STORMY] DamageAccumulator initialized")
     else
-        print("[STORMY] DamageAccumulator not available")
+        -- print("[STORMY] DamageAccumulator not available")
     end
     
     -- UI components
     if self.DamageMeter then
         self.DamageMeter:Initialize()
-        print("[STORMY] DamageMeter initialized")
+        -- print("[STORMY] DamageMeter initialized")
     else
-        print("[STORMY] DamageMeter not available")
+        -- print("[STORMY] DamageMeter not available")
     end
     
-    print("[STORMY] Initialization complete!")
+    -- print("[STORMY] Initialization complete!")
 end
 
 -- Enable function
 function addon:OnEnable()
     if self.db.enabled then
-        print(string.format("[STORMY] %s is now active!", addonName))
+        -- print(string.format("[STORMY] %s is now active!", addonName))
         
         -- Combat detection is handled automatically by EventProcessor
         -- No manual start needed
@@ -176,7 +176,7 @@ function addon:OnDisable()
         end
     end
     
-    print("[STORMY] Disabled and state saved")
+    -- print("[STORMY] Disabled and state saved")
 end
 
 -- =============================================================================
@@ -192,7 +192,7 @@ SlashCmdList["STORMY"] = function(msg)
         if addon.DamageMeter then
             addon.DamageMeter:Toggle()
         else
-            print("[STORMY] Damage meter not available")
+            -- print("[STORMY] Damage meter not available")
         end
     elseif command == "debug" then
         print("=== STORMY Debug Information ===")
@@ -355,7 +355,7 @@ end
 
 -- Emergency reset
 function addon:EmergencyReset()
-    print("[STORMY] Emergency reset initiated...")
+    -- print("[STORMY] Emergency reset initiated...")
     
     if self.EventProcessor then
         self.EventProcessor:ResetStats()
@@ -371,7 +371,7 @@ function addon:EmergencyReset()
     
     collectgarbage("collect")
     
-    print("[STORMY] Emergency reset complete")
+    -- print("[STORMY] Emergency reset complete")
 end
 
-print(string.format("[STORMY] Loaded v%s", addon.VERSION))
+-- print(string.format("[STORMY] Loaded v%s", addon.VERSION))
