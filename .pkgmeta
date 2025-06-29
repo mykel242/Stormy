@@ -1,0 +1,31 @@
+package-as: Stormy
+
+ignore:
+  - .git
+  - .github
+  - .gitignore
+  - .luacheckrc
+  - .busted
+  - .release
+  - .pkgmeta
+  - tests
+  - "*.md"
+  - Rockspec
+  - "*.yml"
+  - "*.yaml"
+  - ".*.swp"
+  - ".*.swo"
+  - "*.bak"
+  - "*~"
+  - ".DS_Store"
+  - "Thumbs.db"
+
+# Uncomment to enable CurseForge/WoWInterface auto-packaging
+# enable-nolib-creation: no
+
+# Uncomment and configure if using external libraries
+# externals:
+#   Libs/LibStub:
+#     url: https://repos.wowace.com/wow/libstub/trunk
+#   Libs/AceAddon-3.0:
+#     url: https://repos.wowace.com/wow/ace3/trunk/AceAddon-3.0

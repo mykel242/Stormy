@@ -1,0 +1,108 @@
+name: Validate TOC
+
+on:
+  push:
+    paths:
+      - '**.toc'
+  pull_request:
+    paths:
+      - '**.toc'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Validate TOC structure
+      run: |
+        echo "## TOC Validation Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Check if TOC file exists
+        if [ ! -f "STORMY.toc" ]; then
+          echo "❌ ERROR: STORMY.toc file not found!" >> $GITHUB_STEP_SUMMARY
+          exit 1
+        fi
+        
+        echo "✅ STORMY.toc file found" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Required fields
+        ERRORS=0
+        
+        # Check Interface version
+        if ! grep -q "^## Interface:" STORMY.toc; then
+          echo "❌ Missing required field: ## Interface:" >> $GITHUB_STEP_SUMMARY
+          ERRORS=$((ERRORS + 1))
+        else
+          INTERFACE=$(grep "^## Interface:" STORMY.toc | cut -d' ' -f3)
+          echo "✅ Interface version: $INTERFACE" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Check Title
+        if ! grep -q "^## Title:" STORMY.toc; then
+          echo "❌ Missing required field: ## Title:" >> $GITHUB_STEP_SUMMARY
+          ERRORS=$((ERRORS + 1))
+        else
+          echo "✅ Title field present" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Check Version
+        if ! grep -q "^## Version:" STORMY.toc; then
+          echo "❌ Missing required field: ## Version:" >> $GITHUB_STEP_SUMMARY
+          ERRORS=$((ERRORS + 1))
+        else
+          VERSION=$(grep "^## Version:" STORMY.toc | cut -d' ' -f3)
+          echo "✅ Version: $VERSION" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        # Check Author
+        if ! grep -q "^## Author:" STORMY.toc; then
+          echo "❌ Missing required field: ## Author:" >> $GITHUB_STEP_SUMMARY
+          ERRORS=$((ERRORS + 1))
+        else
+          echo "✅ Author field present" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Check for file references
+        echo "### Checking file references..." >> $GITHUB_STEP_SUMMARY
+        
+        # Extract non-comment lines
+        FILES=$(grep -v "^#" STORMY.toc | grep -v "^$")
+        MISSING_FILES=0
+        
+        while IFS= read -r file; do
+          if [ ! -z "$file" ]; then
+            if [ ! -f "$file" ]; then
+              echo "❌ Missing file: $file" >> $GITHUB_STEP_SUMMARY
+              MISSING_FILES=$((MISSING_FILES + 1))
+            fi
+          fi
+        done <<< "$FILES"
+        
+        if [ $MISSING_FILES -eq 0 ]; then
+          echo "✅ All referenced files exist" >> $GITHUB_STEP_SUMMARY
+        else
+          ERRORS=$((ERRORS + $MISSING_FILES))
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Summary
+        if [ $ERRORS -eq 0 ]; then
+          echo "### ✅ TOC validation passed!" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "### ❌ TOC validation failed with $ERRORS errors" >> $GITHUB_STEP_SUMMARY
+          exit 1
+        fi
+    
+    - name: Check load order
+      run: |
+        echo "### Load Order Analysis" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        grep -v "^#" STORMY.toc | grep -v "^$" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY

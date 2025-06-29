@@ -1,0 +1,19 @@
+package = "stormy"
+version = "dev-1"
+source = {
+   url = "git://github.com/mykel242/Stormy.git"
+}
+description = {
+   summary = "Unit tests for Stormy WoW Addon",
+   homepage = "https://github.com/mykel242/Stormy",
+   license = "MIT"
+}
+dependencies = {
+   "lua >= 5.1",
+   "busted >= 2.0.0",
+   "luacov >= 0.15.0"
+}
+build = {
+   type = "builtin",
+   modules = {}
+}
