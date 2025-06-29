@@ -26,20 +26,53 @@ jobs:
     
     - name: Run luacheck
       run: |
-        luacheck . --formatter JUnit > lint-results.xml || true
-        luacheck . || true
-    
-    - name: Annotate files
-      uses: yuzutech/annotations-action@v0.5.0
-      if: always()
-      with:
-        reports: lint-results.xml
-        title: Lua Linting Results
-    
-    - name: Generate summary
-      if: always()
-      run: |
+        echo "Running luacheck..."
+        set +e  # Don't exit on non-zero exit codes
+        luacheck . > lint-output.txt 2>&1
+        LINT_EXIT_CODE=$?
+        set -e  # Re-enable exit on error
+        
+        # Show results regardless of exit code
         echo "## Lua Linting Results" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        luacheck . --formatter default || true >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f "lint-output.txt" ]; then
+          # Count warnings and errors from luacheck output
+          WARNING_COUNT=$(grep -c "warning" lint-output.txt 2>/dev/null || echo "0")
+          ERROR_COUNT=$(grep -c "error" lint-output.txt 2>/dev/null || echo "0")
+          
+          # Also check the final summary line
+          TOTAL_LINE=$(grep "^Total:" lint-output.txt 2>/dev/null || echo "")
+          
+          echo "**Luacheck exit code:** $LINT_EXIT_CODE" >> $GITHUB_STEP_SUMMARY
+          echo "**Summary:** $WARNING_COUNT warnings, $ERROR_COUNT errors" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ ! -z "$TOTAL_LINE" ]; then
+            echo "**Total:** $TOTAL_LINE" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo '<details><summary>Full Linting Report</summary>' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat lint-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '</details>' >> $GITHUB_STEP_SUMMARY
+          
+          # We configured luacheck to have very few warnings (7 remaining)
+          # Exit code 1 just means there are warnings, which is acceptable
+          if [ "$ERROR_COUNT" -gt 0 ]; then
+            echo "❌ Linting failed with $ERROR_COUNT errors"
+            exit 1
+          elif [ "$LINT_EXIT_CODE" -eq 0 ]; then
+            echo "✅ Linting passed with no warnings!"
+          else
+            echo "✅ Linting passed with warnings (exit code $LINT_EXIT_CODE - acceptable)"
+            echo "Our configuration allows warnings but not errors."
+          fi
+        else
+          echo "⚠️ Could not generate linting report" >> $GITHUB_STEP_SUMMARY
+          exit 1
+        fi
