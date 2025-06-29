@@ -198,7 +198,7 @@ function EventProcessor:ProcessEvent(...)
         isPet = addon.EntityTracker:IsPet(sourceGUID)
         
         -- If not recognized yet, check combat flags for pets/guardians (like DK ghouls)
-        if not isPlayer and not isPet and sourceFlags then
+        if not isPlayer and not isPet and sourceFlags and addon.EntityTracker.CheckPetByCombatFlags then
             isPet = addon.EntityTracker:CheckPetByCombatFlags(sourceGUID, sourceName, sourceFlags)
         end
         
