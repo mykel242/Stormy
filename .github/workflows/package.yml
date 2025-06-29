@@ -1,0 +1,80 @@
+name: Package Addon
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - 'release-*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to package (e.g., 1.0.0)'
+        required: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set version
+      id: version
+      run: |
+        if [ "${{ github.event.inputs.version }}" != "" ]; then
+          VERSION="${{ github.event.inputs.version }}"
+        elif [[ $GITHUB_REF == refs/tags/* ]]; then
+          VERSION=${GITHUB_REF#refs/tags/}
+          VERSION=${VERSION#v}
+        else
+          VERSION="dev-${GITHUB_SHA::8}"
+        fi
+        echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION"
+    
+    - name: Update TOC version
+      run: |
+        sed -i "s/## Version: .*/## Version: ${{ steps.version.outputs.VERSION }}/" STORMY.toc
+    
+    - name: Create package directory
+      run: |
+        mkdir -p .release/Stormy
+        rsync -av --exclude-from=.pkgmeta --exclude='.git*' --exclude='.release' --exclude='tests' --exclude='*.md' --exclude='.luacheckrc' --exclude='.busted' --exclude='Rockspec' . .release/Stormy/
+    
+    - name: Create .pkgmeta if missing
+      run: |
+        if [ ! -f .pkgmeta ]; then
+          cat > .pkgmeta << 'EOF'
+        ignore:
+          - .git
+          - .github
+          - .gitignore
+          - .luacheckrc
+          - .busted
+          - .release
+          - tests
+          - "*.md"
+          - Rockspec
+          - .pkgmeta
+        EOF
+        fi
+    
+    - name: Zip addon
+      run: |
+        cd .release
+        zip -r ../Stormy-${{ steps.version.outputs.VERSION }}.zip Stormy
+        cd ..
+    
+    - name: Generate checksums
+      run: |
+        sha256sum Stormy-${{ steps.version.outputs.VERSION }}.zip > Stormy-${{ steps.version.outputs.VERSION }}.zip.sha256
+        md5sum Stormy-${{ steps.version.outputs.VERSION }}.zip > Stormy-${{ steps.version.outputs.VERSION }}.zip.md5
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: Stormy-${{ steps.version.outputs.VERSION }}
+        path: |
+          Stormy-${{ steps.version.outputs.VERSION }}.zip
+          Stormy-${{ steps.version.outputs.VERSION }}.zip.sha256
+          Stormy-${{ steps.version.outputs.VERSION }}.zip.md5

@@ -1,0 +1,84 @@
+name: Lua Linting
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Lua
+      uses: leafo/gh-actions-lua@v10
+      with:
+        luaVersion: "5.1"
+    
+    - name: Set up LuaRocks
+      uses: leafo/gh-actions-luarocks@v4
+    
+    - name: Install luacheck
+      run: luarocks install luacheck
+    
+    - name: Run luacheck
+      run: |
+        echo "Running luacheck..."
+        set +e  # Don't exit on non-zero exit codes
+        luacheck . > lint-output.txt 2>&1
+        LINT_EXIT_CODE=$?
+        set -e  # Re-enable exit on error
+        
+        # Show results regardless of exit code
+        echo "## Lua Linting Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f "lint-output.txt" ]; then
+          # Get the total summary line which is most reliable
+          TOTAL_LINE=$(grep "^Total:" lint-output.txt 2>/dev/null || echo "")
+          
+          # Extract warnings and errors from the Total line if it exists
+          if [ ! -z "$TOTAL_LINE" ]; then
+            # Parse "Total: X warnings / Y errors in Z files"
+            WARNING_COUNT=$(echo "$TOTAL_LINE" | sed -n 's/.*\([0-9]\+\) warnings.*/\1/p' || echo "0")
+            ERROR_COUNT=$(echo "$TOTAL_LINE" | sed -n 's/.*\([0-9]\+\) errors.*/\1/p' || echo "0")
+          else
+            # Fallback: count individual warning/error lines (more precise patterns)
+            WARNING_COUNT=$(grep -c ": warning" lint-output.txt 2>/dev/null || echo "0")
+            ERROR_COUNT=$(grep -c ": error" lint-output.txt 2>/dev/null || echo "0")
+          fi
+          
+          echo "**Luacheck exit code:** $LINT_EXIT_CODE" >> $GITHUB_STEP_SUMMARY
+          if [ ! -z "$TOTAL_LINE" ]; then
+            echo "**Total:** $TOTAL_LINE" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Summary:** $WARNING_COUNT warnings, $ERROR_COUNT errors" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo '<details><summary>Full Linting Report</summary>' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat lint-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '</details>' >> $GITHUB_STEP_SUMMARY
+          
+          # Luacheck exit codes: 0=no issues, 1=warnings only, 2+=errors
+          # We've configured our project to have minimal warnings, so exit code 1 is acceptable
+          if [ "$LINT_EXIT_CODE" -eq 0 ]; then
+            echo "✅ Linting passed with no warnings!"
+          elif [ "$LINT_EXIT_CODE" -eq 1 ]; then
+            echo "✅ Linting passed with warnings (acceptable)"
+            echo "Project configured to allow warnings but not errors."
+          else
+            echo "❌ Linting failed with critical errors (exit code $LINT_EXIT_CODE)"
+            exit 1
+          fi
+        else
+          echo "⚠️ Could not generate linting report" >> $GITHUB_STEP_SUMMARY
+          exit 1
+        fi
