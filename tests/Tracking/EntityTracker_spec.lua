@@ -9,13 +9,69 @@ describe("EntityTracker", function()
         _G.STORMY_NAMESPACE = {}
         addon = _G.STORMY_NAMESPACE
         
+        -- Mock WoW API functions
+        _G.UnitClass = function(unit)
+            if unit == "player" then
+                return "Hunter", "HUNTER", 3
+            end
+            return nil
+        end
+        _G.UnitGUID = function(unit)
+            if unit == "player" then
+                return "Player-1234-56789ABC"
+            end
+            return nil
+        end
+        _G.UnitName = function(unit)
+            if unit == "player" then
+                return "TestPlayer"
+            end
+            return nil
+        end
+        _G.UnitLevel = function(unit)
+            if unit == "player" then
+                return 80
+            end
+            return nil
+        end
+
         -- Mock bit operations (WoW provides these)
         _G.bit = {
-            band = function(a, b) return a & b end,
-            bor = function(a, b) return a | b end,
-            lshift = function(a, b) return a << b end,
-            rshift = function(a, b) return a >> b end,
+            band = function(a, b) 
+                -- Simple bitwise AND implementation for testing
+                local result = 0
+                local bit_value = 1
+                while a > 0 or b > 0 do
+                    if (a % 2 == 1) and (b % 2 == 1) then
+                        result = result + bit_value
+                    end
+                    a = math.floor(a / 2)
+                    b = math.floor(b / 2)
+                    bit_value = bit_value * 2
+                end
+                return result
+            end,
+            bor = function(a, b) 
+                -- Simple bitwise OR implementation for testing
+                local result = 0
+                local bit_value = 1
+                while a > 0 or b > 0 do
+                    if (a % 2 == 1) or (b % 2 == 1) then
+                        result = result + bit_value
+                    end
+                    a = math.floor(a / 2)
+                    b = math.floor(b / 2)
+                    bit_value = bit_value * 2
+                end
+                return result
+            end,
+            lshift = function(a, b) return a * (2 ^ b) end,
+            rshift = function(a, b) return math.floor(a / (2 ^ b)) end,
         }
+        
+        -- Load dependencies first
+        dofile("Core/EventBus.lua")
+        dofile("Core/TablePool.lua")
         
         -- Load EntityTracker
         dofile("Tracking/EntityTracker.lua")
@@ -49,7 +105,7 @@ describe("EntityTracker", function()
             
             -- COMBATLOG_OBJECT_TYPE_PET = 0x00001000
             -- COMBATLOG_OBJECT_AFFILIATION_MINE = 0x00000001
-            local petFlags = 0x00001000 | 0x00000001  -- Pet + Mine
+            local petFlags = _G.bit.bor(0x00001000, 0x00000001)  -- Pet + Mine
             
             local result = EntityTracker:CheckPetByCombatFlags(petGUID, petName, petFlags)
             assert.is_true(result)
@@ -64,7 +120,7 @@ describe("EntityTracker", function()
             
             -- COMBATLOG_OBJECT_TYPE_GUARDIAN = 0x00002000
             -- COMBATLOG_OBJECT_AFFILIATION_MINE = 0x00000001
-            local guardianFlags = 0x00002000 | 0x00000001  -- Guardian + Mine
+            local guardianFlags = _G.bit.bor(0x00002000, 0x00000001)  -- Guardian + Mine
             
             local result = EntityTracker:CheckPetByCombatFlags(guardianGUID, guardianName, guardianFlags)
             assert.is_true(result)
@@ -94,7 +150,7 @@ describe("EntityTracker", function()
             
             -- COMBATLOG_OBJECT_TYPE_NPC = 0x00000400
             -- COMBATLOG_OBJECT_AFFILIATION_OUTSIDER = 0x00000008
-            local npcFlags = 0x00000400 | 0x00000008  -- NPC + Outsider
+            local npcFlags = _G.bit.bor(0x00000400, 0x00000008)  -- NPC + Outsider
             
             local result = EntityTracker:CheckPetByCombatFlags(npcGUID, npcName, npcFlags)
             assert.is_false(result)
@@ -107,7 +163,7 @@ describe("EntityTracker", function()
             local petGUID = "Pet-0-1234-5678"
             
             -- COMBATLOG_OBJECT_TYPE_PET + COMBATLOG_OBJECT_AFFILIATION_MINE
-            local petFlags = 0x00001000 | 0x00000001
+            local petFlags = _G.bit.bor(0x00001000, 0x00000001)
             
             -- Test with nil name
             local result = EntityTracker:CheckPetByCombatFlags(petGUID, nil, petFlags)
@@ -124,7 +180,7 @@ describe("EntityTracker", function()
             local entityName = "TestEntity"
             
             -- Both pet and guardian flags (should still work)
-            local mixedFlags = 0x00001000 | 0x00002000 | 0x00000001  -- Pet + Guardian + Mine
+            local mixedFlags = _G.bit.bor(_G.bit.bor(0x00001000, 0x00002000), 0x00000001)  -- Pet + Guardian + Mine
             
             local result = EntityTracker:CheckPetByCombatFlags(entityGUID, entityName, mixedFlags)
             assert.is_true(result)
@@ -138,7 +194,7 @@ describe("EntityTracker", function()
         it("should dispatch events when pets are detected via combat flags", function()
             local petGUID = "Pet-0-1234-5678"
             local petName = "CombatFlagPet"
-            local petFlags = 0x00001000 | 0x00000001  -- Pet + Mine
+            local petFlags = _G.bit.bor(0x00001000, 0x00000001)  -- Pet + Mine
             
             -- Track event dispatches (simplified mock)
             local eventDispatched = false
@@ -167,7 +223,7 @@ describe("EntityTracker", function()
             local initialPetCount = initialStats.tracking.petsDetected
             
             local petGUID = "Pet-0-1234-5678"
-            local petFlags = 0x00001000 | 0x00000001  -- Pet + Mine
+            local petFlags = _G.bit.bor(0x00001000, 0x00000001)  -- Pet + Mine
             
             EntityTracker:CheckPetByCombatFlags(petGUID, "NewPet", petFlags)
             
