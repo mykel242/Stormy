@@ -43,7 +43,8 @@ local CONFIG = {
     GUARDIAN_TIMEOUT = 60,      -- Remove guardians not seen for 60 seconds
     CACHE_CLEANUP_INTERVAL = 60, -- Clean cache every 60 seconds
     MAX_CACHE_SIZE = 1000,      -- Maximum cached entities
-    SCAN_INTERVAL = 2.0         -- Pet scan interval during activity
+    SCAN_INTERVAL = 2.0,        -- Pet scan interval during activity
+    DEBUG_PET_DETECTION = false -- Enable debug logging for pet detection
 }
 
 -- =============================================================================
@@ -217,6 +218,60 @@ end
 -- Check if a GUID belongs to a tracked pet
 function EntityTracker:IsPet(guid)
     return trackingState.activePets[guid] ~= nil
+end
+
+-- Add pet via combat log flags (for guardians/temporary pets like DK ghouls)
+function EntityTracker:CheckPetByCombatFlags(sourceGUID, sourceName, sourceFlags)
+    if not sourceGUID or not sourceFlags then
+        if CONFIG.DEBUG_PET_DETECTION then
+            print(string.format("[STORMY DEBUG] CheckPetByCombatFlags: Invalid parameters - GUID: %s, Flags: %s", 
+                tostring(sourceGUID), tostring(sourceFlags)))
+        end
+        return false
+    end
+    
+    -- Skip if already tracking
+    if trackingState.activePets[sourceGUID] then
+        if CONFIG.DEBUG_PET_DETECTION then
+            print(string.format("[STORMY DEBUG] CheckPetByCombatFlags: Already tracking %s (%s)", 
+                sourceName or "Unknown", sourceGUID))
+        end
+        return true
+    end
+    
+    -- Combat log flags for pets/guardians
+    local COMBATLOG_OBJECT_TYPE_PET = 0x00001000
+    local COMBATLOG_OBJECT_TYPE_GUARDIAN = 0x00002000
+    local COMBATLOG_OBJECT_AFFILIATION_MINE = 0x00000001
+    
+    -- Check if it's our pet/guardian
+    local isMyPet = bit.band(sourceFlags, COMBATLOG_OBJECT_AFFILIATION_MINE) ~= 0 and
+                    (bit.band(sourceFlags, COMBATLOG_OBJECT_TYPE_PET) ~= 0 or
+                     bit.band(sourceFlags, COMBATLOG_OBJECT_TYPE_GUARDIAN) ~= 0)
+    
+    if CONFIG.DEBUG_PET_DETECTION then
+        local flagsStr = string.format("0x%08X", sourceFlags)
+        local isPet = bit.band(sourceFlags, COMBATLOG_OBJECT_TYPE_PET) ~= 0
+        local isGuardian = bit.band(sourceFlags, COMBATLOG_OBJECT_TYPE_GUARDIAN) ~= 0
+        local isMine = bit.band(sourceFlags, COMBATLOG_OBJECT_AFFILIATION_MINE) ~= 0
+        
+        print(string.format("[STORMY DEBUG] CheckPetByCombatFlags: %s (%s) - Flags: %s, Pet: %s, Guardian: %s, Mine: %s, Result: %s", 
+            sourceName or "Unknown", sourceGUID, flagsStr, tostring(isPet), tostring(isGuardian), tostring(isMine), tostring(isMyPet)))
+    end
+    
+    if isMyPet then
+        local petType = bit.band(sourceFlags, COMBATLOG_OBJECT_TYPE_PET) ~= 0 and "Pet" or "Guardian"
+        self:AddPet(sourceGUID, sourceName or "Unknown", petType)
+        
+        if CONFIG.DEBUG_PET_DETECTION then
+            print(string.format("[STORMY DEBUG] CheckPetByCombatFlags: Added %s %s (%s)", 
+                petType, sourceName or "Unknown", sourceGUID))
+        end
+        
+        return true
+    end
+    
+    return false
 end
 
 -- Check if a GUID belongs to a tracked guardian
@@ -523,6 +578,7 @@ function EntityTracker:Debug()
     print(string.format("Active Guardians: %d", stats.tracking.activeGuardians))
     print(string.format("Total Tracked: %d", stats.tracking.totalEntitiesTracked))
     print(string.format("Cache: %d/%d entries", stats.cache.size, stats.cache.maxSize))
+    print(string.format("Debug Pet Detection: %s", CONFIG.DEBUG_PET_DETECTION and "ENABLED" or "DISABLED"))
     
     -- Show active entities
     if stats.tracking.activePets > 0 then
@@ -538,6 +594,31 @@ function EntityTracker:Debug()
             print(string.format("  %s: %s (%.1fs ago)", guardian.name, guid, GetTime() - guardian.lastSeen))
         end
     end
+end
+
+-- Enable debug logging for pet detection
+function EntityTracker:EnablePetDebug()
+    CONFIG.DEBUG_PET_DETECTION = true
+    print("[STORMY] Pet detection debug logging ENABLED")
+end
+
+-- Disable debug logging for pet detection  
+function EntityTracker:DisablePetDebug()
+    CONFIG.DEBUG_PET_DETECTION = false
+    print("[STORMY] Pet detection debug logging DISABLED")
+end
+
+-- Toggle debug logging for pet detection
+function EntityTracker:TogglePetDebug()
+    CONFIG.DEBUG_PET_DETECTION = not CONFIG.DEBUG_PET_DETECTION
+    print(string.format("[STORMY] Pet detection debug logging %s", 
+        CONFIG.DEBUG_PET_DETECTION and "ENABLED" or "DISABLED"))
+    return CONFIG.DEBUG_PET_DETECTION
+end
+
+-- Get debug status
+function EntityTracker:IsDebugEnabled()
+    return CONFIG.DEBUG_PET_DETECTION
 end
 
 -- =============================================================================
