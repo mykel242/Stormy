@@ -2,7 +2,7 @@
 ## Title: STORMY - Real-time Personal Damage Tracker
 ## Notes: High-performance damage tracking focused on player and pets with minimal overhead
 ## Author: You
-## Version: 1.0.5
+## Version: 1.0.6
 ## SavedVariables: StormyDB
 ## DefaultState: enabled
 ## OptionalDeps: Ace3, LibStub
