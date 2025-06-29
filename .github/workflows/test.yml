@@ -29,27 +29,44 @@ jobs:
       run: |
         luarocks install busted
         luarocks install luacov
-        luarocks install luacov-console
     
     - name: Run tests
       run: |
         busted -v --coverage tests/
     
     - name: Generate coverage report
+      if: matrix.lua-version == '5.1'
       run: |
-        luacov-console -s
-        luacov-console -s -h > coverage.txt
-        echo "## Test Coverage Report" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        cat coverage.txt >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+        # Check if luacov generated files
+        if [ -f "luacov.stats.out" ]; then
+          echo "Coverage data found, generating report..."
+          luacov
+          if [ -f "luacov.report.out" ]; then
+            # Create a summary from the detailed report
+            echo "## Test Coverage Report" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Coverage analysis completed. Key files covered:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            # Show summary of covered files
+            grep -E "^[[:space:]]*[0-9]" luacov.report.out | head -20 >> $GITHUB_STEP_SUMMARY || echo "No detailed coverage data available" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Full coverage report available in artifacts." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## Test Coverage Report" >> $GITHUB_STEP_SUMMARY
+            echo "Coverage report could not be generated from stats file" >> $GITHUB_STEP_SUMMARY
+          fi
+        else
+          echo "## Test Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "No coverage data collected - this is normal for addon tests that use dofile()" >> $GITHUB_STEP_SUMMARY
+        fi
     
     - name: Upload coverage reports
       uses: actions/upload-artifact@v4
-      if: matrix.lua-version == '5.1'
+      if: matrix.lua-version == '5.1' && hashFiles('luacov.stats.out') != ''
       with:
         name: coverage-report
         path: |
           luacov.stats.out
           luacov.report.out
-          coverage.txt
+        if-no-files-found: warn

@@ -1,0 +1,28 @@
+-- luacov configuration file
+return {
+  -- default config
+  statsfile = "luacov.stats.out",
+  reportfile = "luacov.report.out",
+  
+  -- only include project files, exclude test files
+  include = {
+    "Core/",
+    "Combat/", 
+    "Tracking/",
+    "UI/",
+    "STORMY%.lua$"
+  },
+  
+  -- exclude test files and external dependencies  
+  exclude = {
+    "tests/",
+    "spec_helper",
+    "%.busted"
+  },
+  
+  -- don't delete stats file after report generation
+  deletestats = false,
+  
+  -- coverage percentage thresholds
+  coveralls = false,
+}
