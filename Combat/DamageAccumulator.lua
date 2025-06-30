@@ -1,6 +1,6 @@
 -- DamageAccumulator.lua
--- Real-time damage and healing accumulation with rolling window calculations
--- Heart of the STORMY system - all damage flows through here
+-- Real-time damage accumulation with rolling window calculations
+-- Extends MeterAccumulator for damage-specific functionality
 
 local addonName, addon = ...
 
@@ -11,526 +11,339 @@ local addonName, addon = ...
 addon.DamageAccumulator = {}
 local DamageAccumulator = addon.DamageAccumulator
 
--- Rolling window configurations
-local WINDOWS = {
-    CURRENT = 5,    -- 5 second "current" DPS
-    SHORT = 15,     -- 15 second short-term average
-    MEDIUM = 30,    -- 30 second medium-term average
-    LONG = 60       -- 60 second encounter length
-}
+-- Initialize base class when it's available
+local MeterAccumulator = nil
 
--- Accumulator state (all mutable in place for performance)
-local accumulatorState = {
-    -- Lifetime totals
-    totalDamage = 0,
-    totalHealing = 0,
-    totalEvents = 0,
-    
-    -- Player vs Pet breakdown
-    playerDamage = 0,
-    petDamage = 0,
-    playerHealing = 0,
-    petHealing = 0,
-    
-    -- Peak tracking with decay
-    peakDPS = 0,
-    peakHPS = 0,
-    peakDecayRate = 0.98, -- 2% decay per second
-    lastPeakUpdate = 0,
-    
-    -- Current calculations (updated on request)
-    currentDPS = 0,
-    currentHPS = 0,
-    lastCalculation = 0,
-    
-    -- Activity tracking
-    lastDamageTime = 0,
-    lastHealingTime = 0,
-    eventsThisSecond = 0,
-    currentSecond = 0,
-    
-    -- Efficiency metrics
-    totalCritDamage = 0,
-    totalCritHealing = 0,
-    criticalHits = 0,
-    totalHits = 0,
-    
-    -- Time tracking
-    firstEventTime = 0,
-    lastEventTime = 0
-}
+-- Initialize function (called after MeterAccumulator loads)
+local function InitializeBaseClass()
+    if addon.MeterAccumulator then
+        MeterAccumulator = addon.MeterAccumulator
+    end
+end
 
--- Rolling window data (separate arrays for performance)
-local rollingData = {
-    damage = {},    -- [timestamp] = amount
-    healing = {},   -- [timestamp] = amount
-    events = {},    -- [timestamp] = { damage = amount, healing = amount }
+-- Damage-specific configuration
+local DAMAGE_CONFIG = {
+    -- Track different damage types
+    trackDamageTypes = true,
     
-    -- Cached window totals (invalidated on new data)
-    cachedTotals = {},
-    lastCacheTime = 0,
-    cacheValid = false
+    -- Critical damage tracking
+    trackCriticals = true,
+    
+    -- Spell vs melee separation
+    trackAttackTypes = true
 }
 
 -- =============================================================================
--- CORE ACCUMULATION FUNCTIONS
+-- DAMAGE ACCUMULATOR CLASS
 -- =============================================================================
 
--- Add damage event (zero allocation)
-function DamageAccumulator:AddDamage(timestamp, sourceGUID, amount, isPlayer, isPet, isCritical)
-    local now = GetTime()
+function DamageAccumulator:New()
+    -- Initialize base class if not done yet
+    InitializeBaseClass()
     
-    -- Update activity tracking
-    self:UpdateActivity(now)
+    if not MeterAccumulator then
+        error("DamageAccumulator: MeterAccumulator base class not available")
+    end
     
-    -- Store in rolling data
-    self:StoreEvent(timestamp, amount, 0, isCritical)
+    -- Create base instance
+    local instance = MeterAccumulator:New("Damage")
     
-    -- Update totals
-    accumulatorState.totalDamage = accumulatorState.totalDamage + amount
-    accumulatorState.totalEvents = accumulatorState.totalEvents + 1
-    accumulatorState.lastDamageTime = now
-    accumulatorState.lastEventTime = now
+    -- Add damage-specific state
+    instance.damageState = {
+        -- Total values
+        totalSpellDamage = 0,
+        totalMeleeDamage = 0,
+        totalDOTDamage = 0,
+        
+        -- Player vs Pet breakdown
+        playerSpellDamage = 0,
+        petSpellDamage = 0,
+        playerMeleeDamage = 0,
+        petMeleeDamage = 0,
+        
+        -- Damage type breakdown
+        spellEvents = 0,
+        meleeEvents = 0,
+        dotEvents = 0,
+        
+        -- Current calculations
+        currentSpellDPS = 0,
+        currentMeleeDPS = 0,
+        peakSpellDPS = 0,
+        peakMeleeDPS = 0
+    }
     
-    -- Track first event
-    if accumulatorState.firstEventTime == 0 then
-        accumulatorState.firstEventTime = now
+    -- Add damage-specific rolling data
+    instance.damageRollingData = {
+        spellDamage = {},   -- [timestamp] = amount
+        meleeDamage = {},   -- [timestamp] = amount  
+        dotDamage = {},     -- [timestamp] = amount
+    }
+    
+    -- Copy methods to instance
+    for k, v in pairs(self) do
+        if type(v) == "function" and k ~= "New" then
+            instance[k] = v
+        end
+    end
+    
+    return instance
+end
+
+-- =============================================================================
+-- DAMAGE-SPECIFIC EVENT PROCESSING
+-- =============================================================================
+
+-- Override the base OnEvent method to process damage-specific data
+function DamageAccumulator:OnEvent(timestamp, sourceGUID, amount, isPlayer, isPet, isCritical, extraData)
+    -- For damage events, extraData could contain spell info, damage type, etc.
+    local spellId = extraData and extraData.spellId
+    local damageType = extraData and extraData.damageType or "unknown"
+    local isSpell = spellId and spellId > 0
+    local isDOT = extraData and extraData.isDOT or false
+    
+    -- Store damage-specific data
+    self:StoreDamageData(timestamp, amount, isSpell, isDOT, isPlayer, isPet)
+    
+    -- Update totals based on damage type
+    if isDOT then
+        self.damageState.totalDOTDamage = self.damageState.totalDOTDamage + amount
+        self.damageState.dotEvents = self.damageState.dotEvents + 1
+    elseif isSpell then
+        self.damageState.totalSpellDamage = self.damageState.totalSpellDamage + amount
+        self.damageState.spellEvents = self.damageState.spellEvents + 1
+    else
+        self.damageState.totalMeleeDamage = self.damageState.totalMeleeDamage + amount
+        self.damageState.meleeEvents = self.damageState.meleeEvents + 1
     end
     
     -- Player vs Pet breakdown
     if isPlayer then
-        accumulatorState.playerDamage = accumulatorState.playerDamage + amount
+        if isSpell then
+            self.damageState.playerSpellDamage = self.damageState.playerSpellDamage + amount
+        else
+            self.damageState.playerMeleeDamage = self.damageState.playerMeleeDamage + amount
+        end
     elseif isPet then
-        accumulatorState.petDamage = accumulatorState.petDamage + amount
+        if isSpell then
+            self.damageState.petSpellDamage = self.damageState.petSpellDamage + amount
+        else
+            self.damageState.petMeleeDamage = self.damageState.petMeleeDamage + amount
+        end
     end
-    
-    -- Critical hit tracking
-    if isCritical then
-        accumulatorState.totalCritDamage = accumulatorState.totalCritDamage + amount
-        accumulatorState.criticalHits = accumulatorState.criticalHits + 1
-    end
-    accumulatorState.totalHits = accumulatorState.totalHits + 1
-    
-    -- Invalidate cache
-    rollingData.cacheValid = false
 end
 
--- Add healing event (zero allocation)
-function DamageAccumulator:AddHealing(timestamp, sourceGUID, amount, isPlayer, isPet, isCritical)
-    local now = GetTime()
-    
-    -- Update activity tracking
-    self:UpdateActivity(now)
-    
-    -- Store in rolling data
-    self:StoreEvent(timestamp, 0, amount, isCritical)
-    
-    -- Update totals
-    accumulatorState.totalHealing = accumulatorState.totalHealing + amount
-    accumulatorState.totalEvents = accumulatorState.totalEvents + 1
-    accumulatorState.lastHealingTime = now
-    accumulatorState.lastEventTime = now
-    
-    -- Track first event
-    if accumulatorState.firstEventTime == 0 then
-        accumulatorState.firstEventTime = now
-    end
-    
-    -- Player vs Pet breakdown
-    if isPlayer then
-        accumulatorState.playerHealing = accumulatorState.playerHealing + amount
-    elseif isPet then
-        accumulatorState.petHealing = accumulatorState.petHealing + amount
-    end
-    
-    -- Critical healing tracking
-    if isCritical then
-        accumulatorState.totalCritHealing = accumulatorState.totalCritHealing + amount
-        accumulatorState.criticalHits = accumulatorState.criticalHits + 1
-    end
-    accumulatorState.totalHits = accumulatorState.totalHits + 1
-    
-    -- Invalidate cache
-    rollingData.cacheValid = false
-end
-
--- =============================================================================
--- ROLLING WINDOW CALCULATIONS
--- =============================================================================
-
--- Store event in rolling data structure
-function DamageAccumulator:StoreEvent(timestamp, damageAmount, healingAmount, isCritical)
-    -- Use TimingManager as single source of truth for all timestamps
+-- Store damage-specific data in rolling windows
+function DamageAccumulator:StoreDamageData(timestamp, damageAmount, isSpell, isDOT, isPlayer, isPet)
     local relativeTime = addon.TimingManager:GetCurrentRelativeTime()
     
-    -- Store in separate arrays for fast access
-    if damageAmount > 0 then
-        rollingData.damage[relativeTime] = (rollingData.damage[relativeTime] or 0) + damageAmount
-    end
-    
-    if healingAmount > 0 then
-        rollingData.healing[relativeTime] = (rollingData.healing[relativeTime] or 0) + healingAmount
-    end
-    
-    -- Store combined event data
-    if not rollingData.events[relativeTime] then
-        rollingData.events[relativeTime] = { damage = 0, healing = 0, criticals = 0, hits = 0 }
-    end
-    
-    local event = rollingData.events[relativeTime]
-    event.damage = event.damage + damageAmount
-    event.healing = event.healing + healingAmount
-    event.hits = event.hits + 1
-    if isCritical then
-        event.criticals = event.criticals + 1
+    -- Store damage by type
+    if isDOT then
+        self.damageRollingData.dotDamage[relativeTime] = (self.damageRollingData.dotDamage[relativeTime] or 0) + damageAmount
+    elseif isSpell then
+        self.damageRollingData.spellDamage[relativeTime] = (self.damageRollingData.spellDamage[relativeTime] or 0) + damageAmount
+    else
+        self.damageRollingData.meleeDamage[relativeTime] = (self.damageRollingData.meleeDamage[relativeTime] or 0) + damageAmount
     end
 end
 
--- Calculate totals for a specific time window
-function DamageAccumulator:GetWindowTotals(windowSeconds)
-    local now = addon.TimingManager:GetCurrentRelativeTime()
-    local cutoffTime = now - windowSeconds
-    
-    -- Debug: first few calls to see what's happening
-    local debugCount = 0
-    local recentEvents = 0
-    
-    local totalDamage = 0
-    local totalHealing = 0
-    local eventCount = 0
-    local critCount = 0
-    
-    -- Sum damage in window
-    for timestamp, amount in pairs(rollingData.damage) do
-        debugCount = debugCount + 1
-        if timestamp >= cutoffTime then
-            totalDamage = totalDamage + amount
-            recentEvents = recentEvents + 1
-        end
+-- Override base StoreExtraData method
+function DamageAccumulator:StoreExtraData(event, extraData)
+    if not event.damageData then
+        event.damageData = {
+            spellDamage = 0,
+            meleeDamage = 0,
+            dotDamage = 0
+        }
     end
     
-    -- Debug: Print if we have issues with decay
-    if debugCount > 0 and totalDamage > 0 and windowSeconds == 5 then
-        local timeSinceLastEvent = now - accumulatorState.lastEventTime
-        if timeSinceLastEvent > 10 and accumulatorState.totalEvents < 50 then  -- Only debug early in session
-            -- print(string.format("[STORMY DEBUG] Window calc: %d total events, %d recent, %.1fs since last event", 
-                -- debugCount, recentEvents, timeSinceLastEvent))
-        end
-    end
+    local data = event.damageData
+    local isSpell = extraData and extraData.spellId and extraData.spellId > 0
+    local isDOT = extraData and extraData.isDOT or false
     
-    -- Sum healing in window
-    for timestamp, amount in pairs(rollingData.healing) do
-        if timestamp >= cutoffTime then
-            totalHealing = totalHealing + amount
-        end
+    if isDOT then
+        data.dotDamage = data.dotDamage + event.value
+    elseif isSpell then
+        data.spellDamage = data.spellDamage + event.value
+    else
+        data.meleeDamage = data.meleeDamage + event.value
     end
-    
-    -- Count events and crits in window
-    for timestamp, event in pairs(rollingData.events) do
-        if timestamp >= cutoffTime then
-            eventCount = eventCount + event.hits
-            critCount = critCount + event.criticals
-        end
-    end
-    
-    return {
-        damage = totalDamage,
-        healing = totalHealing,
-        events = eventCount,
-        criticals = critCount,
-        duration = windowSeconds,
-        dps = windowSeconds > 0 and (totalDamage / windowSeconds) or 0,
-        hps = windowSeconds > 0 and (totalHealing / windowSeconds) or 0,
-        critPercent = eventCount > 0 and (critCount / eventCount * 100) or 0
-    }
 end
 
--- Clean old data beyond maximum window
+-- =============================================================================
+-- DAMAGE-SPECIFIC CALCULATIONS
+-- =============================================================================
+
+-- Override base CalculateWindowExtras method
+function DamageAccumulator:CalculateWindowExtras(result, windowSeconds, cutoffTime)
+    local totalSpellDamage = 0
+    local totalMeleeDamage = 0
+    local totalDOTDamage = 0
+    
+    -- Sum spell damage in window
+    for timestamp, amount in pairs(self.damageRollingData.spellDamage) do
+        if timestamp >= cutoffTime then
+            totalSpellDamage = totalSpellDamage + amount
+        end
+    end
+    
+    -- Sum melee damage in window
+    for timestamp, amount in pairs(self.damageRollingData.meleeDamage) do
+        if timestamp >= cutoffTime then
+            totalMeleeDamage = totalMeleeDamage + amount
+        end
+    end
+    
+    -- Sum DOT damage in window
+    for timestamp, amount in pairs(self.damageRollingData.dotDamage) do
+        if timestamp >= cutoffTime then
+            totalDOTDamage = totalDOTDamage + amount
+        end
+    end
+    
+    -- Add damage-specific metrics to result
+    result.spellDamage = totalSpellDamage
+    result.meleeDamage = totalMeleeDamage
+    result.dotDamage = totalDOTDamage
+    result.spellDPS = windowSeconds > 0 and (totalSpellDamage / windowSeconds) or 0
+    result.meleeDPS = windowSeconds > 0 and (totalMeleeDamage / windowSeconds) or 0
+    result.dotDPS = windowSeconds > 0 and (totalDOTDamage / windowSeconds) or 0
+end
+
+-- Update current damage calculations
+function DamageAccumulator:UpdateCurrentValues()
+    -- Call base method first
+    MeterAccumulator.UpdateCurrentValues(self)
+    
+    -- Calculate damage-specific current values
+    local currentWindow = self:GetWindowTotals(5) -- 5 second window
+    
+    self.damageState.currentSpellDPS = currentWindow.spellDPS or 0
+    self.damageState.currentMeleeDPS = currentWindow.meleeDPS or 0
+    
+    -- Update peaks
+    if self.damageState.currentSpellDPS > self.damageState.peakSpellDPS then
+        self.damageState.peakSpellDPS = self.damageState.currentSpellDPS
+    end
+    
+    if self.damageState.currentMeleeDPS > self.damageState.peakMeleeDPS then
+        self.damageState.peakMeleeDPS = self.damageState.currentMeleeDPS
+    end
+end
+
+-- =============================================================================
+-- CLEAN UP DAMAGE DATA
+-- =============================================================================
+
+-- Override base CleanOldData method
 function DamageAccumulator:CleanOldData()
-    local maxWindow = WINDOWS.LONG
+    local cleaned = MeterAccumulator.CleanOldData(self)
+    
+    local maxWindow = 60 -- 60 second window
     local now = addon.TimingManager and addon.TimingManager:GetCurrentRelativeTime() or GetTime()
     local cutoffTime = now - maxWindow
     
-    local cleaned = 0
-    
-    -- Clean damage data
-    for timestamp in pairs(rollingData.damage) do
+    -- Clean damage-specific data
+    for timestamp in pairs(self.damageRollingData.spellDamage) do
         if timestamp < cutoffTime then
-            rollingData.damage[timestamp] = nil
-            cleaned = cleaned + 1
+            self.damageRollingData.spellDamage[timestamp] = nil
         end
     end
     
-    -- Clean healing data
-    for timestamp in pairs(rollingData.healing) do
+    for timestamp in pairs(self.damageRollingData.meleeDamage) do
         if timestamp < cutoffTime then
-            rollingData.healing[timestamp] = nil
+            self.damageRollingData.meleeDamage[timestamp] = nil
         end
     end
     
-    -- Clean event data
-    for timestamp in pairs(rollingData.events) do
+    for timestamp in pairs(self.damageRollingData.dotDamage) do
         if timestamp < cutoffTime then
-            rollingData.events[timestamp] = nil
+            self.damageRollingData.dotDamage[timestamp] = nil
         end
     end
-    
-    -- Invalidate cache after cleanup
-    rollingData.cacheValid = false
     
     return cleaned
 end
 
 -- =============================================================================
--- CURRENT DPS/HPS CALCULATIONS
+-- PUBLIC API EXTENSIONS
 -- =============================================================================
 
--- Calculate and cache current DPS/HPS
-function DamageAccumulator:UpdateCurrentValues()
-    local now = GetTime()
-    
-    -- Update peak values with decay
-    self:UpdatePeaks(now)
-    
-    -- Calculate current values
-    local currentWindow = self:GetWindowTotals(WINDOWS.CURRENT)
-    accumulatorState.currentDPS = currentWindow.dps
-    accumulatorState.currentHPS = currentWindow.hps
-    
-    -- Update peaks if current values are higher
-    if accumulatorState.currentDPS > accumulatorState.peakDPS then
-        accumulatorState.peakDPS = accumulatorState.currentDPS
-    end
-    
-    if accumulatorState.currentHPS > accumulatorState.peakHPS then
-        accumulatorState.peakHPS = accumulatorState.currentHPS
-    end
-    
-    accumulatorState.lastCalculation = now
-end
-
--- Update peak values with decay
-function DamageAccumulator:UpdatePeaks(currentTime)
-    local elapsed = currentTime - accumulatorState.lastPeakUpdate
-    if elapsed > 0 then
-        local decayFactor = accumulatorState.peakDecayRate ^ elapsed
-        accumulatorState.peakDPS = accumulatorState.peakDPS * decayFactor
-        accumulatorState.peakHPS = accumulatorState.peakHPS * decayFactor
-        accumulatorState.lastPeakUpdate = currentTime
-    end
-end
-
--- =============================================================================
--- ACTIVITY TRACKING
--- =============================================================================
-
--- Update activity metrics
-function DamageAccumulator:UpdateActivity(currentTime)
-    local currentSecond = math.floor(currentTime)
-    
-    -- Reset counter if we've moved to a new second
-    if currentSecond ~= accumulatorState.currentSecond then
-        accumulatorState.eventsThisSecond = 0
-        accumulatorState.currentSecond = currentSecond
-    end
-    
-    accumulatorState.eventsThisSecond = accumulatorState.eventsThisSecond + 1
-end
-
--- Get current activity level (0.0 to 1.0)
-function DamageAccumulator:GetActivityLevel()
-    local timeSinceLastEvent = GetTime() - accumulatorState.lastEventTime
-    
-    -- Full activity if recent event
-    if timeSinceLastEvent < 1.0 then
-        return 1.0
-    elseif timeSinceLastEvent < 5.0 then
-        -- Decay over 5 seconds
-        return 1.0 - ((timeSinceLastEvent - 1.0) / 4.0)
-    else
-        return 0.0
-    end
-end
-
--- =============================================================================
--- PUBLIC API
--- =============================================================================
-
--- Get current DPS (cached)
+-- Get current DPS (base damage only)
 function DamageAccumulator:GetCurrentDPS()
-    -- Update if stale
-    if GetTime() - accumulatorState.lastCalculation > 0.5 then
+    return self:GetCurrentMetric()
+end
+
+-- Get current spell DPS
+function DamageAccumulator:GetCurrentSpellDPS()
+    if GetTime() - self.state.lastCalculation > 0.5 then
         self:UpdateCurrentValues()
     end
-    return accumulatorState.currentDPS
+    return self.damageState.currentSpellDPS
 end
 
--- Get current HPS (cached)
-function DamageAccumulator:GetCurrentHPS()
-    -- Update if stale
-    if GetTime() - accumulatorState.lastCalculation > 0.5 then
+-- Get current melee DPS
+function DamageAccumulator:GetCurrentMeleeDPS()
+    if GetTime() - self.state.lastCalculation > 0.5 then
         self:UpdateCurrentValues()
     end
-    return accumulatorState.currentHPS
+    return self.damageState.currentMeleeDPS
 end
 
--- Get peak DPS
-function DamageAccumulator:GetPeakDPS()
-    self:UpdatePeaks(GetTime())
-    return accumulatorState.peakDPS
-end
-
--- Get peak HPS
-function DamageAccumulator:GetPeakHPS()
-    self:UpdatePeaks(GetTime())
-    return accumulatorState.peakHPS
-end
-
--- Get comprehensive statistics
-function DamageAccumulator:GetStats()
-    -- Ensure current values are up to date
-    self:UpdateCurrentValues()
+-- Override base GetExtraStats method
+function DamageAccumulator:GetExtraStats(stats)
+    -- Add damage-specific stats
+    stats.totalSpellDamage = self.damageState.totalSpellDamage
+    stats.totalMeleeDamage = self.damageState.totalMeleeDamage
+    stats.totalDOTDamage = self.damageState.totalDOTDamage
     
-    -- Calculate total encounter time
-    local encounterDuration = 0
-    if accumulatorState.firstEventTime > 0 then
-        encounterDuration = GetTime() - accumulatorState.firstEventTime
-    end
+    stats.playerSpellDamage = self.damageState.playerSpellDamage
+    stats.petSpellDamage = self.damageState.petSpellDamage
+    stats.playerMeleeDamage = self.damageState.playerMeleeDamage
+    stats.petMeleeDamage = self.damageState.petMeleeDamage
     
-    -- Get window calculations
-    local current = self:GetWindowTotals(WINDOWS.CURRENT)
-    local short = self:GetWindowTotals(WINDOWS.SHORT)
-    local medium = self:GetWindowTotals(WINDOWS.MEDIUM)
+    stats.currentSpellDPS = self.damageState.currentSpellDPS
+    stats.currentMeleeDPS = self.damageState.currentMeleeDPS
+    stats.peakSpellDPS = self.damageState.peakSpellDPS
+    stats.peakMeleeDPS = self.damageState.peakMeleeDPS
     
-    return {
-        -- Totals
-        totalDamage = accumulatorState.totalDamage,
-        totalHealing = accumulatorState.totalHealing,
-        totalEvents = accumulatorState.totalEvents,
-        
-        -- Player vs Pet
-        playerDamage = accumulatorState.playerDamage,
-        petDamage = accumulatorState.petDamage,
-        playerHealing = accumulatorState.playerHealing,
-        petHealing = accumulatorState.petHealing,
-        
-        -- Current values
-        currentDPS = accumulatorState.currentDPS,
-        currentHPS = accumulatorState.currentHPS,
-        peakDPS = self:GetPeakDPS(),
-        peakHPS = self:GetPeakHPS(),
-        
-        -- Rolling windows
-        current = current,
-        short = short,
-        medium = medium,
-        
-        -- Efficiency
-        criticalPercent = accumulatorState.totalHits > 0 and 
-                         (accumulatorState.criticalHits / accumulatorState.totalHits * 100) or 0,
-        totalCritDamage = accumulatorState.totalCritDamage,
-        totalCritHealing = accumulatorState.totalCritHealing,
-        
-        -- Activity
-        encounterDuration = encounterDuration,
-        activityLevel = self:GetActivityLevel(),
-        eventsPerSecond = accumulatorState.eventsThisSecond,
-        timeSinceLastEvent = GetTime() - accumulatorState.lastEventTime,
-        
-        -- Performance
-        lastCalculation = accumulatorState.lastCalculation
-    }
-end
-
--- Get simple display data (for UI)
-function DamageAccumulator:GetDisplayData()
-    local stats = self:GetStats()
-    
-    return {
-        currentDPS = math.floor(stats.currentDPS),
-        peakDPS = math.floor(stats.peakDPS),
-        totalDamage = stats.totalDamage,
-        
-        currentHPS = math.floor(stats.currentHPS),
-        peakHPS = math.floor(stats.peakHPS),
-        totalHealing = stats.totalHealing,
-        
-        critPercent = math.floor(stats.criticalPercent * 10) / 10, -- One decimal
-        activityLevel = stats.activityLevel,
-        encounterTime = math.floor(stats.encounterDuration)
-    }
+    stats.spellEvents = self.damageState.spellEvents
+    stats.meleeEvents = self.damageState.meleeEvents
+    stats.dotEvents = self.damageState.dotEvents
 end
 
 -- =============================================================================
--- MAINTENANCE AND DEBUGGING
+-- RESET AND DEBUGGING
 -- =============================================================================
 
--- Reset all accumulated data
-function DamageAccumulator:Reset()
-    -- Clear state
-    for key in pairs(accumulatorState) do
-        if type(accumulatorState[key]) == "number" then
-            accumulatorState[key] = 0
+-- Override base OnReset method
+function DamageAccumulator:OnReset()
+    -- Clear damage-specific state
+    for key in pairs(self.damageState) do
+        if type(self.damageState[key]) == "number" then
+            self.damageState[key] = 0
         end
     end
     
-    -- Reset decay rate
-    accumulatorState.peakDecayRate = 0.98
-    
-    -- Clear rolling data
-    rollingData.damage = {}
-    rollingData.healing = {}
-    rollingData.events = {}
-    rollingData.cachedTotals = {}
-    rollingData.cacheValid = false
-    
-    -- print("[STORMY] DamageAccumulator reset")
+    -- Clear damage rolling data
+    self.damageRollingData.spellDamage = {}
+    self.damageRollingData.meleeDamage = {}
+    self.damageRollingData.dotDamage = {}
 end
 
--- Maintenance cleanup (called periodically)
-function DamageAccumulator:Maintenance()
-    local cleaned = self:CleanOldData()
-    
-    if cleaned > 0 then
-        -- Force garbage collection if we cleaned a lot
-        if cleaned > 100 then
-            collectgarbage("step", 100)
-        end
-    end
-    
-    return cleaned
-end
-
--- Debug information
-function DamageAccumulator:Debug()
-    local stats = self:GetStats()
-    print("=== DamageAccumulator Debug ===")
-    print(string.format("Total Damage: %s (%.0f DPS)", self:FormatNumber(stats.totalDamage), stats.currentDPS))
-    print(string.format("Peak DPS: %.0f", stats.peakDPS))
-    print(string.format("Events: %d (%.1f%% crit)", stats.totalEvents, stats.criticalPercent))
-    print(string.format("Player: %s (%.1f%%), Pet: %s (%.1f%%)", 
-        self:FormatNumber(stats.playerDamage), 
-        stats.totalDamage > 0 and (stats.playerDamage / stats.totalDamage * 100) or 0,
-        self:FormatNumber(stats.petDamage),
-        stats.totalDamage > 0 and (stats.petDamage / stats.totalDamage * 100) or 0))
-    print(string.format("Activity: %.1f%%, Duration: %.1fs", stats.activityLevel * 100, stats.encounterDuration))
-    
-    -- Window breakdown
-    print("Rolling Windows:")
-    print(string.format("  5s: %.0f DPS", stats.current.dps))
-    print(string.format("  15s: %.0f DPS", stats.short.dps))
-    print(string.format("  30s: %.0f DPS", stats.medium.dps))
-end
-
--- Format large numbers for display
-function DamageAccumulator:FormatNumber(num)
-    if num >= 1000000 then
-        return string.format("%.1fM", num / 1000000)
-    elseif num >= 1000 then
-        return string.format("%.1fK", num / 1000)
-    else
-        return tostring(math.floor(num))
-    end
+-- Override base DebugExtra method
+function DamageAccumulator:DebugExtra(stats)
+    print("Damage-Specific Metrics:")
+    print(string.format("  Spell DPS: %.0f, Melee DPS: %.0f", 
+          stats.currentSpellDPS, stats.currentMeleeDPS))
+    print(string.format("  Peak Spell: %.0f, Peak Melee: %.0f", 
+          stats.peakSpellDPS, stats.peakMeleeDPS))
+    print(string.format("  Total Spell: %s, Total Melee: %s, Total DOT: %s", 
+          self:FormatNumber(stats.totalSpellDamage), 
+          self:FormatNumber(stats.totalMeleeDamage),
+          self:FormatNumber(stats.totalDOTDamage)))
+    print(string.format("  Events: %d spell, %d melee, %d DOT", 
+          stats.spellEvents, stats.meleeEvents, stats.dotEvents))
 end
 
 -- =============================================================================
@@ -539,15 +352,19 @@ end
 
 -- Initialize the damage accumulator
 function DamageAccumulator:Initialize()
-    self:Reset()
+    -- Initialize base class first
+    InitializeBaseClass()
     
-    -- Set up periodic maintenance
-    local maintenanceTimer = C_Timer.NewTicker(30, function()
-        self:Maintenance()
-    end)
+    if not MeterAccumulator then
+        error("DamageAccumulator: Cannot initialize without MeterAccumulator base class")
+    end
     
-    self.maintenanceTimer = maintenanceTimer
+    MeterAccumulator.Initialize(self)
+    
+    print("[STORMY] DamageAccumulator: Initialized with spell/melee tracking")
 end
 
 -- Module ready
 DamageAccumulator.isReady = true
+
+return DamageAccumulator

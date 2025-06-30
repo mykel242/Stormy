@@ -92,6 +92,7 @@ Constants.HEALING_EVENTS = {
     ["SPELL_PERIODIC_HEAL"] = true,
 }
 
+
 -- Events we NEVER want to process (immediate return)
 Constants.IGNORED_EVENTS = {
     -- Environmental and positioning

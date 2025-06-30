@@ -28,6 +28,7 @@ local function CacheConstants()
         CONTROL_MASKS = Constants.CONTROL_MASKS
         HasFlag = Constants.HasFlag
         IsPlayerControlled = Constants.IsPlayerControlled
+        
     end
 end
 
@@ -156,10 +157,9 @@ function EventProcessor:ProcessEvent(...)
         return -- Drop events when overwhelmed
     end
     
-    -- Extract combat log data (zero allocation)
+    -- Extract base combat log data
     local timestamp, eventType, hideCaster, sourceGUID, sourceName, sourceFlags, sourceRaidFlags,
-          destGUID, destName, destFlags, destRaidFlags, spellId, spellName, spellSchool,
-          amount, overkill, school, resisted, blocked, absorbed, critical, glancing, crushing, isOffHand = ...
+          destGUID, destName, destFlags, destRaidFlags = ...
     
     processingState.lastEventTime = GetTime()
     
@@ -180,6 +180,7 @@ function EventProcessor:ProcessEvent(...)
         processingState.ignoredEvents = processingState.ignoredEvents + 1
         return
     end
+    
     
     -- STEP 3: Check if source is player-controlled (bitwise operation)
     if IsPlayerControlled and not IsPlayerControlled(sourceFlags) then
@@ -224,7 +225,27 @@ function EventProcessor:ProcessEvent(...)
         end
     end
     
-    -- STEP 5: Validate amount (damage/healing must have meaningful value)
+    -- STEP 5: Extract event-specific parameters and validate
+    local spellId, spellName, spellSchool, amount, critical, absorbed
+    
+    if eventCategory == "damage" then
+        -- Damage events: extract damage amount
+        if eventType == "SWING_DAMAGE" then
+            amount = select(12, ...)
+            critical = select(18, ...)
+        else
+            spellId = select(12, ...)
+            amount = select(15, ...)
+            critical = select(21, ...)
+        end
+    elseif eventCategory == "healing" then
+        -- Healing events: extract healing amount
+        spellId = select(12, ...)
+        amount = select(15, ...)
+        critical = select(18, ...)
+    end
+    
+    -- Validate amount
     if not amount or amount <= 0 then
         processingState.ignoredEvents = processingState.ignoredEvents + 1
         return
@@ -245,8 +266,22 @@ function EventProcessor:ProcessEvent(...)
         self:ProcessDamageEvent(timestamp, sourceGUID, destGUID, spellId, amount, 
                                critical, isPlayer, isPet)
     elseif eventCategory == "healing" then
+        -- For healing events, extract overhealing and absorbed amounts
+        local overhealing = 0
+        local absorb = 0
+        
+        -- Combat log healing format: timestamp, eventType, hideCaster, sourceGUID, sourceName, sourceFlags, sourceRaidFlags,
+        -- destGUID, destName, destFlags, destRaidFlags, spellId, spellName, spellSchool, amount, overhealing, absorbed, critical
+        if eventType == "SPELL_HEAL" or eventType == "SPELL_PERIODIC_HEAL" then
+            -- Get additional parameters for healing events
+            local healArgs = {select(17, ...)} -- Start after absorbed parameter 
+            if #healArgs >= 1 then
+                overhealing = healArgs[1] or 0
+            end
+        end
+        
         self:ProcessHealingEvent(timestamp, sourceGUID, destGUID, spellId, amount, 
-                                critical, isPlayer, isPet)
+                                critical, isPlayer, isPet, overhealing, absorb)
     end
 end
 
@@ -256,8 +291,10 @@ function EventProcessor:ProcessDamageEvent(timestamp, sourceGUID, destGUID, spel
     -- Convert timestamp to relative time
     local relativeTime = addon.TimingManager:GetRelativeTime(timestamp)
     
-    -- Dispatch to damage accumulator (no table creation)
-    addon.DamageAccumulator:AddDamage(relativeTime, sourceGUID, amount, isPlayer, isPet)
+    -- Route to MeterManager for proper damage accumulator dispatch
+    if addon.MeterManager then
+        addon.MeterManager:RouteDamageEvent(relativeTime, sourceGUID, amount, isPlayer, isPet, critical)
+    end
     
     -- Dispatch event via event bus (creates minimal event object)
     addon.EventBus:DispatchDamage({
@@ -273,13 +310,24 @@ end
 
 -- Process healing event (zero allocation)
 function EventProcessor:ProcessHealingEvent(timestamp, sourceGUID, destGUID, spellId, amount, 
-                                           critical, isPlayer, isPet)
+                                           critical, isPlayer, isPet, overhealing, absorbed)
     -- Convert timestamp to relative time
     local relativeTime = addon.TimingManager:GetRelativeTime(timestamp)
     
-    -- Dispatch to healing accumulator (if we add healing tracking later)
-    -- For now, just track as damage for DPS meters
-    addon.DamageAccumulator:AddHealing(relativeTime, sourceGUID, amount, isPlayer, isPet)
+    -- Determine if this is a HOT vs direct heal
+    local isHOT = false
+    if CombatLogGetCurrentEventInfo then
+        local eventType = select(2, CombatLogGetCurrentEventInfo())
+        isHOT = eventType == "SPELL_PERIODIC_HEAL"
+    end
+    
+    -- Route to MeterManager for proper healing accumulator dispatch
+    if addon.MeterManager then
+        addon.MeterManager:RouteHealingEvent(
+            relativeTime, sourceGUID, amount, absorbed or 0, 
+            isPlayer, isPet, critical, overhealing or 0
+        )
+    end
     
     -- Dispatch event via event bus
     addon.EventBus:DispatchHealing({
@@ -289,9 +337,13 @@ function EventProcessor:ProcessHealingEvent(timestamp, sourceGUID, destGUID, spe
         critical = critical,
         isPlayer = isPlayer,
         isPet = isPet,
-        timestamp = relativeTime
+        timestamp = relativeTime,
+        overhealing = overhealing or 0,
+        absorbed = absorbed or 0,
+        isHOT = isHOT
     })
 end
+
 
 -- =============================================================================
 -- PLAYER CACHE MANAGEMENT

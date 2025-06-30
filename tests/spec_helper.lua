@@ -277,4 +277,48 @@ function mock.reset()
     _G.C_Timer.timers = {}
 end
 
+-- Helper functions for tests
+local helpers = {}
+
+-- Count number of entries in a table
+function helpers.table_length(t)
+    local count = 0
+    for _ in pairs(t) do
+        count = count + 1
+    end
+    return count
+end
+
+-- Create a mock addon namespace with required dependencies
+function helpers.create_mock_addon()
+    local addon = {}
+    -- Add any common addon properties here
+    return addon
+end
+
+-- Load a module at a specific path
+function helpers.load_module_at_path(path, addon)
+    local full_path = path
+    if not full_path:match("^/") then
+        -- Relative path - prepend the stormy directory
+        full_path = "/Users/mykel/Development/wow/Stormy/" .. path
+    end
+    
+    -- Load the file with the addon context
+    local chunk, err = loadfile(full_path)
+    if not chunk then
+        error("Failed to load module: " .. full_path .. " - " .. tostring(err))
+    end
+    
+    -- Execute with addon name and namespace
+    chunk("Stormy", addon)
+    
+    return addon
+end
+
+-- Merge helpers into mock table
+for k, v in pairs(helpers) do
+    mock[k] = v
+end
+
 return mock
