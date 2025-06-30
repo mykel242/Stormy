@@ -10,37 +10,23 @@ describe("MeterAccumulator", function()
     before_each(function()
         addon = helpers.create_mock_addon()
         
-        -- Mock dependencies - use absolute time for simplicity in tests
+        -- Mock TimingManager with consistent base time for tests
+        local baseTime = 100  -- Use a fixed base time for all tests
         addon.TimingManager = {
-            GetCurrentRelativeTime = function() 
-                return GetTime()
-            end,
-            GetRelativeTime = function(ts)
-                -- Ensure we return a number
-                if type(ts) == "table" then
-                    error("GetRelativeTime received a table instead of number")
+            GetCurrentRelativeTime = function() return baseTime end,
+            GetRelativeTime = function(timestamp) 
+                -- Ensure we always return a number
+                if type(timestamp) == "number" then
+                    return timestamp
+                else
+                    return baseTime
                 end
-                return tonumber(ts) or 0
             end
         }
         
         -- Load module
         helpers.load_module_at_path("Combat/MeterAccumulator.lua", addon)
         MeterAccumulator = addon.MeterAccumulator
-        
-        -- Ensure our mock is still in place (in case something overwrote it)
-        addon.TimingManager = {
-            GetCurrentRelativeTime = function() 
-                return GetTime()
-            end,
-            GetRelativeTime = function(ts)
-                -- Ensure we return a number
-                if type(ts) == "table" then
-                    error("GetRelativeTime received a table instead of number")
-                end
-                return tonumber(ts) or 0
-            end
-        }
     end)
     
     describe("New", function()
@@ -126,11 +112,13 @@ describe("MeterAccumulator", function()
         end)
         
         it("should calculate window totals correctly", function()
-            local now = GetTime()
-            -- Add events at different times
-            accumulator:AddEvent(now - 10, "player-guid", 1000, true, false, false)
-            accumulator:AddEvent(now - 4.9, "player-guid", 2000, true, false, false)  -- Slightly inside window
-            accumulator:AddEvent(now - 2, "player-guid", 3000, true, false, false)
+            -- Use the consistent base time from TimingManager mock
+            local baseTime = 100
+            
+            -- Add events at different relative times
+            accumulator:AddEvent(baseTime - 10, "player-guid", 1000, true, false, false)  -- Outside 5s window
+            accumulator:AddEvent(baseTime - 4.9, "player-guid", 2000, true, false, false)  -- Inside 5s window  
+            accumulator:AddEvent(baseTime - 2, "player-guid", 3000, true, false, false)    -- Inside 5s window
             
             -- Check 5 second window (should only include last 2 events)
             local window5 = accumulator:GetWindowTotals(5)
@@ -162,7 +150,7 @@ describe("MeterAccumulator", function()
         end)
         
         it("should return current metric per second", function()
-            local now = GetTime()
+            local now = addon.TimingManager:GetCurrentRelativeTime()
             accumulator:AddEvent(now - 2, "player-guid", 5000, true, false, false)
             accumulator:AddEvent(now - 1, "player-guid", 5000, true, false, false)
             

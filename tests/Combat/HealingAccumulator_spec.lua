@@ -11,10 +11,18 @@ describe("HealingAccumulator", function()
     before_each(function()
         addon = helpers.create_mock_addon()
         
-        -- Mock dependencies
+        -- Mock TimingManager that maintains relative time consistency
+        local testStartTime = GetTime()
         addon.TimingManager = {
-            GetCurrentRelativeTime = function() return GetTime() end,
-            GetRelativeTime = function(ts) return ts end
+            GetCurrentRelativeTime = function() return testStartTime end,
+            GetRelativeTime = function(timestamp) 
+                -- Ensure we always return a number
+                if type(timestamp) == "number" then
+                    return timestamp
+                else
+                    return testStartTime
+                end
+            end
         }
         
         -- Load base class first
@@ -131,7 +139,7 @@ describe("HealingAccumulator", function()
         end)
         
         it("should return healing + absorbs per second", function()
-            local now = GetTime()
+            local now = addon.TimingManager:GetCurrentRelativeTime()
             -- Add healing
             accumulator:AddEvent(now - 2, "player-guid", 5000, true, false, false, {
                 absorbAmount = 0,
@@ -248,7 +256,7 @@ describe("HealingAccumulator", function()
         end)
         
         it("should include absorbs and overhealing in window totals", function()
-            local now = GetTime()
+            local now = addon.TimingManager:GetCurrentRelativeTime()
             accumulator:AddEvent(now - 3, "player-guid", 1000, true, false, false, {
                 absorbAmount = 500,
                 overhealing = 100

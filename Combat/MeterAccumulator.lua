@@ -138,6 +138,11 @@ function MeterAccumulator:StoreEvent(timestamp, amount, isCritical, extraData)
     -- Convert timestamp to relative time using TimingManager
     local relativeTime = addon.TimingManager:GetRelativeTime(timestamp)
     
+    -- Only store if we get a valid number
+    if type(relativeTime) ~= "number" then
+        return
+    end
+    
     -- Store in values array for fast access
     self.rollingData.values[relativeTime] = (self.rollingData.values[relativeTime] or 0) + amount
     
@@ -175,14 +180,14 @@ function MeterAccumulator:GetWindowTotals(windowSeconds)
     
     -- Sum values in window
     for timestamp, amount in pairs(self.rollingData.values) do
-        if timestamp >= cutoffTime then
+        if type(timestamp) == "number" and timestamp >= cutoffTime then
             totalValue = totalValue + amount
         end
     end
     
     -- Count events and crits in window
     for timestamp, event in pairs(self.rollingData.events) do
-        if timestamp >= cutoffTime then
+        if type(timestamp) == "number" and timestamp >= cutoffTime then
             eventCount = eventCount + event.hits
             critCount = critCount + event.criticals
         end

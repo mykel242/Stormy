@@ -11,10 +11,18 @@ describe("DamageAccumulator", function()
     before_each(function()
         addon = helpers.create_mock_addon()
         
-        -- Mock dependencies
+        -- Mock TimingManager that maintains relative time consistency
+        local testStartTime = GetTime()
         addon.TimingManager = {
-            GetCurrentRelativeTime = function() return GetTime() end,
-            GetRelativeTime = function(ts) return ts end
+            GetCurrentRelativeTime = function() return testStartTime end,
+            GetRelativeTime = function(timestamp) 
+                -- Ensure we always return a number
+                if type(timestamp) == "number" then
+                    return timestamp
+                else
+                    return testStartTime
+                end
+            end
         }
         
         -- Load base class first
@@ -171,7 +179,7 @@ describe("DamageAccumulator", function()
         end)
         
         it("should track spell and melee damage separately", function()
-            local now = GetTime()
+            local now = addon.TimingManager:GetCurrentRelativeTime()
             -- Spell damage
             accumulator:AddEvent(now - 2, "player-guid", 6000, true, false, false, {
                 spellId = 12345
@@ -206,7 +214,7 @@ describe("DamageAccumulator", function()
         end)
         
         it("should include damage type breakdown in window totals", function()
-            local now = GetTime()
+            local now = addon.TimingManager:GetCurrentRelativeTime()
             accumulator:AddEvent(now - 3, "player-guid", 2000, true, false, false, {
                 spellId = 12345
             })
