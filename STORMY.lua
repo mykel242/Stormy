@@ -33,6 +33,7 @@ addon.defaults = {
     
     -- Window settings
     showMainWindow = false,
+    showHealingWindow = false,
     windowPosition = { point = "CENTER", x = 0, y = 0 },
     windowScale = 1.0,
     
@@ -79,10 +80,10 @@ function addon:OnInitialize()
     -- print(string.format("[STORMY] Build: %s", addon._buildHash))
     
     -- Debug: List available modules
-    -- print("[STORMY] Available modules:")
+    print("[STORMY] Available modules:")
     for k, v in pairs(self) do
         if type(v) == "table" and k ~= "defaults" and k ~= "db" and not k:match("^_") then
-            -- print(string.format("  - %s: %s", k, type(v)))
+            print(string.format("  - %s: %s", k, type(v)))
         end
     end
     
@@ -131,19 +132,94 @@ function addon:OnInitialize()
         -- print("[STORMY] RingBuffer not available")
     end
     
-    if self.DamageAccumulator then
-        self.DamageAccumulator:Initialize()
-        -- print("[STORMY] DamageAccumulator initialized")
+    
+    -- Meter framework
+    if self.MeterManager then
+        print("[STORMY] MeterManager found, initializing...")
+        self.MeterManager:Initialize()
+        print("[STORMY] MeterManager initialized")
     else
-        -- print("[STORMY] DamageAccumulator not available")
+        print("[STORMY] MeterManager module not found!")
     end
     
-    -- UI components
-    if self.DamageMeter then
-        self.DamageMeter:Initialize()
-        -- print("[STORMY] DamageMeter initialized")
+    -- Initialize HealingAccumulator (create instance)
+    if self.HealingAccumulator then
+        print("[STORMY] Creating HealingAccumulator instance...")
+        local success, result = pcall(function()
+            self.HealingAccumulator = self.HealingAccumulator:New()
+            self.HealingAccumulator:Initialize()
+        end)
+        if success then
+            print("[STORMY] HealingAccumulator initialized successfully")
+        else
+            print("[STORMY] HealingAccumulator initialization failed:", result)
+        end
     else
-        -- print("[STORMY] DamageMeter not available")
+        print("[STORMY] HealingAccumulator module not found!")
+    end
+    
+    -- Initialize HealingMeter (create instance)
+    if self.HealingMeter then
+        print("[STORMY] Creating HealingMeter instance...")
+        local success, result = pcall(function()
+            self.HealingMeter = self.HealingMeter:New()
+            self.HealingMeter:Initialize()
+        end)
+        if success then
+            print("[STORMY] HealingMeter initialized successfully")
+        else
+            print("[STORMY] HealingMeter initialization failed:", result)
+        end
+    else
+        print("[STORMY] HealingMeter module not found!")
+    end
+    
+    
+    -- Initialize DamageMeter (create instance)
+    if self.DamageMeter then
+        print("[STORMY] Creating DamageMeter instance...")
+        local success, result = pcall(function()
+            self.DamageMeter = self.DamageMeter:New()
+            self.DamageMeter:Initialize()
+        end)
+        if success then
+            print("[STORMY] DamageMeter initialized successfully")
+        else
+            print("[STORMY] DamageMeter initialization failed:", result)
+        end
+    else
+        print("[STORMY] DamageMeter module not found!")
+    end
+    
+    -- Initialize DamageAccumulator (create instance)
+    if self.DamageAccumulator then
+        print("[STORMY] Creating DamageAccumulator instance...")
+        local success, result = pcall(function()
+            self.DamageAccumulator = self.DamageAccumulator:New()
+            self.DamageAccumulator:Initialize()
+        end)
+        if success then
+            print("[STORMY] DamageAccumulator initialized successfully")
+        else
+            print("[STORMY] DamageAccumulator initialization failed:", result)
+        end
+    else
+        print("[STORMY] DamageAccumulator module not found!")
+    end
+    
+    -- Register meters with MeterManager (after all components are initialized)
+    if self.MeterManager and self.DamageAccumulator and self.DamageMeter then
+        self.MeterManager:RegisterMeter("Damage", self.DamageAccumulator, self.DamageMeter)
+        print("[STORMY] Registered Damage meter")
+    else
+        print("[STORMY] Failed to register Damage meter - MeterManager:", self.MeterManager ~= nil, "DamageAccumulator:", self.DamageAccumulator ~= nil, "DamageMeter:", self.DamageMeter ~= nil)
+    end
+    
+    if self.MeterManager and self.HealingAccumulator and self.HealingMeter then
+        self.MeterManager:RegisterMeter("Healing", self.HealingAccumulator, self.HealingMeter)
+        print("[STORMY] Registered Healing meter")
+    else
+        print("[STORMY] Failed to register Healing meter - MeterManager:", self.MeterManager ~= nil, "HealingAccumulator:", self.HealingAccumulator ~= nil, "HealingMeter:", self.HealingMeter ~= nil)
     end
     
     -- print("[STORMY] Initialization complete!")
@@ -161,6 +237,9 @@ function addon:OnEnable()
         if self.db.showMainWindow and self.DamageMeter then
             self.DamageMeter:Show()
         end
+        if self.db.showHealingWindow and self.HealingMeter then
+            self.HealingMeter:Show()
+        end
     end
 end
 
@@ -174,6 +253,11 @@ function addon:OnDisable()
         if isVisible and self.DamageMeter.GetPosition then
             self.db.windowPosition = self.DamageMeter:GetPosition()
         end
+    end
+    
+    if self.HealingMeter then
+        local isVisible = self.HealingMeter:IsVisible()
+        self.db.showHealingWindow = isVisible
     end
     
     -- print("[STORMY] Disabled and state saved")
@@ -219,6 +303,12 @@ SlashCmdList["STORMY"] = function(msg)
     elseif command == "version" then
         print(string.format("[STORMY] Version %s (Build: %s)", addon.VERSION, addon.BUILD_DATE))
     elseif command == "dps" then
+        if addon.MeterManager then
+            addon.MeterManager:ToggleMeter("Damage")
+        else
+            print("[STORMY] DPS meter not available")
+        end
+    elseif command == "dpsdebug" then
         if addon.DamageAccumulator then
             local stats = addon.DamageAccumulator:GetStats()
             print("=== DPS Debug ===")
@@ -250,6 +340,12 @@ SlashCmdList["STORMY"] = function(msg)
                     cbStats.maxEventsPerFrame, tostring(cbStats.tripped)))
             end
         end
+    elseif command == "hps" then
+        if addon.MeterManager then
+            addon.MeterManager:ToggleMeter("Healing")
+        else
+            print("[STORMY] HPS meter not available")
+        end
     elseif command:match("^cb%s") then
         -- Circuit breaker commands: /stormy cb auto|solo|raid|mythic|<number>
         local mode = command:match("^cb%s+(.+)")
@@ -264,9 +360,11 @@ SlashCmdList["STORMY"] = function(msg)
         print("STORMY Commands:")
         print("  /stormy - Toggle damage meter")
         print("  /stormy show - Toggle damage meter")
+        print("  /stormy dps - Toggle DPS meter")
+        print("  /stormy hps - Toggle HPS meter")
         print("  /stormy debug - Show debug information")
         print("  /stormy reset - Reset statistics")
-        print("  /stormy dps - Debug DPS calculations")
+        print("  /stormy dpsdebug - Debug DPS calculations")
         print("  /stormy cb <mode> - Circuit breaker: auto|solo|raid|mythic|<number>")
         print("  /stormy events - Show recent event types")
         print("  /stormy version - Show version")

@@ -1,15 +1,15 @@
--- DamageMeter.lua
--- Damage meter UI with red theme
--- Extends MeterWindow for damage-specific display
+-- HealingMeter.lua
+-- Healing meter UI with green theme and absorb tracking
+-- Extends MeterWindow for healing-specific display
 
 local addonName, addon = ...
 
 -- =============================================================================
--- DAMAGE METER UI MODULE
+-- HEALING METER UI MODULE
 -- =============================================================================
 
-addon.DamageMeter = {}
-local DamageMeter = addon.DamageMeter
+addon.HealingMeter = {}
+local HealingMeter = addon.HealingMeter
 
 -- Initialize base class when it's available
 local MeterWindow = nil
@@ -21,54 +21,55 @@ local function InitializeBaseClass()
     end
 end
 
--- Damage-specific UI configuration
-local DAMAGE_UI_CONFIG = {
-    -- Red theme colors
-    COLOR_DPS = {1, 0.2, 0.2, 1},           -- Bright red for DPS
-    COLOR_SPELL = {1, 0.4, 0.4, 1},         -- Light red for spells
-    COLOR_MELEE = {1, 0.6, 0.2, 1},         -- Orange for melee
-    COLOR_PET_DAMAGE = {1, 0.8, 0.4, 1},    -- Yellow-orange for pet
+-- Healing-specific UI configuration
+local HEALING_UI_CONFIG = {
+    -- Green theme colors
+    COLOR_HPS = {0.2, 1, 0.4, 1},           -- Bright green for HPS
+    COLOR_ABSORB = {0.4, 0.8, 1, 1},        -- Light blue for absorbs
+    COLOR_EFFECTIVE = {0.6, 1, 0.6, 1},     -- Light green for effective
+    COLOR_PET_HEALING = {0.8, 1, 0.6, 1},   -- Yellow-green for pet
     
-    -- Activity colors (damage-themed)
-    COLOR_ACTIVITY_LOW = {0.8, 0.2, 0.2, 1},    -- Dark red
-    COLOR_ACTIVITY_MED = {1, 0.4, 0.4, 1},      -- Medium red  
-    COLOR_ACTIVITY_HIGH = {1, 0.6, 0.6, 1},     -- Light red
-    COLOR_ACTIVITY_MAX = {1, 0.8, 0.8, 1},      -- Bright pink
+    -- Activity colors (healing-themed)
+    COLOR_ACTIVITY_LOW = {0.2, 0.8, 0.2, 1},    -- Dark green
+    COLOR_ACTIVITY_MED = {0.4, 1, 0.4, 1},      -- Medium green  
+    COLOR_ACTIVITY_HIGH = {0.6, 1, 0.8, 1},     -- Light green-cyan
+    COLOR_ACTIVITY_MAX = {0.8, 1, 1, 1},        -- Bright cyan
 }
 
 -- =============================================================================
--- DAMAGE METER CLASS
+-- HEALING METER CLASS
 -- =============================================================================
 
-function DamageMeter:New()
+function HealingMeter:New()
     -- Initialize base class if not done yet
     InitializeBaseClass()
     
     if not MeterWindow then
-        error("DamageMeter: MeterWindow base class not available")
+        error("HealingMeter: MeterWindow base class not available")
     end
     
-    -- Create damage-specific config
-    local damageConfig = {}
+    -- Create healing-specific config
+    local healingConfig = {}
     
     -- Copy base config
     for k, v in pairs(MeterWindow.config or {}) do
-        damageConfig[k] = v
+        healingConfig[k] = v
     end
     
-    -- Override with damage-specific colors
-    for k, v in pairs(DAMAGE_UI_CONFIG) do
-        damageConfig[k] = v
+    -- Override with healing-specific colors
+    for k, v in pairs(HEALING_UI_CONFIG) do
+        healingConfig[k] = v
     end
     
     -- Create base instance
-    local instance = MeterWindow:New("Damage", damageConfig)
+    local instance = MeterWindow:New("Healing", healingConfig)
     
-    -- Add damage-specific state
-    instance.damageUIState = {
-        showSpellBreakdown = true,
-        spellText = nil,
-        meleeText = nil
+    -- Add healing-specific state
+    instance.healingUIState = {
+        showAbsorbs = true,
+        showEffectiveness = true,
+        absorbText = nil,
+        effectivenessText = nil
     }
     
     -- Copy methods to instance
@@ -86,30 +87,25 @@ end
 -- =============================================================================
 
 -- Override base CustomizeDisplayElements method
-function DamageMeter:CustomizeDisplayElements(parent, largeFont, mediumFont, smallFont)
-    -- Set damage-specific colors
+function HealingMeter:CustomizeDisplayElements(parent, largeFont, mediumFont, smallFont)
+    -- Set healing-specific colors
     if self.state.mainNumberText then
-        self.state.mainNumberText:SetTextColor(unpack(self.config.COLOR_DPS))
+        self.state.mainNumberText:SetTextColor(unpack(self.config.COLOR_HPS))
     end
     
     if self.state.labelText then
-        self.state.labelText:SetText("DPS")
-        self.state.labelText:SetTextColor(unpack(self.config.COLOR_DPS))
+        self.state.labelText:SetText("HPS")
+        self.state.labelText:SetTextColor(unpack(self.config.COLOR_HPS))
     end
     
-    -- Create spell damage display
-    self.damageUIState.spellText = parent:CreateFontString(nil, "OVERLAY")
-    self.damageUIState.spellText:SetFontObject(smallFont)
-    self.damageUIState.spellText:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", 20, 30)
-    self.damageUIState.spellText:SetText("")
-    self.damageUIState.spellText:SetTextColor(unpack(self.config.COLOR_SPELL))
+    -- We'll use the base pet text for the combined display, no need for separate absorb text
     
-    -- Create melee damage display
-    self.damageUIState.meleeText = parent:CreateFontString(nil, "OVERLAY")
-    self.damageUIState.meleeText:SetFontObject(smallFont)
-    self.damageUIState.meleeText:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -15, 30)
-    self.damageUIState.meleeText:SetText("")
-    self.damageUIState.meleeText:SetTextColor(unpack(self.config.COLOR_MELEE))
+    -- Create effectiveness display
+    self.healingUIState.effectivenessText = parent:CreateFontString(nil, "OVERLAY")
+    self.healingUIState.effectivenessText:SetFontObject(smallFont)
+    self.healingUIState.effectivenessText:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -15, 30)
+    self.healingUIState.effectivenessText:SetText("")
+    self.healingUIState.effectivenessText:SetTextColor(unpack(self.config.COLOR_EFFECTIVE))
 end
 
 -- =============================================================================
@@ -117,9 +113,9 @@ end
 -- =============================================================================
 
 -- Override base GetDisplayData method
-function DamageMeter:GetDisplayData()
-    if addon.DamageAccumulator then
-        return addon.DamageAccumulator:GetDisplayData()
+function HealingMeter:GetDisplayData()
+    if addon.HealingAccumulator then
+        return addon.HealingAccumulator:GetDisplayData()
     end
     
     -- Fallback empty data
@@ -132,22 +128,36 @@ function DamageMeter:GetDisplayData()
         critPercent = 0,
         activityLevel = 0,
         encounterTime = 0,
-        meterType = "Damage",
-        currentSpellDPS = 0,
-        currentMeleeDPS = 0,
-        peakSpellDPS = 0,
-        peakMeleeDPS = 0,
-        totalSpellDamage = 0,
-        totalMeleeDamage = 0
+        meterType = "Healing",
+        currentEffectiveHPS = 0,
+        peakEffectiveHPS = 0,
+        currentAbsorbPS = 0,
+        totalAbsorbs = 0,
+        effectivenessPercent = 100
     }
 end
 
 -- Override base GetActivityLevel method
-function DamageMeter:GetActivityLevel()
-    if addon.DamageAccumulator then
-        return addon.DamageAccumulator:GetActivityLevel()
+function HealingMeter:GetActivityLevel()
+    if addon.HealingAccumulator then
+        return addon.HealingAccumulator:GetActivityLevel()
     end
     return 0
+end
+
+-- =============================================================================
+-- HELPER METHODS
+-- =============================================================================
+
+-- Format number with fixed decimal places (000.0k format)
+function HealingMeter:FormatFixedNumber(value)
+    if value >= 1000000 then
+        return string.format("%05.1fM", value / 1000000)
+    elseif value >= 1000 then
+        return string.format("%05.1fK", value / 1000)
+    else
+        return string.format("%05.1f", value)
+    end
 end
 
 -- =============================================================================
@@ -155,26 +165,31 @@ end
 -- =============================================================================
 
 -- Override base CustomUpdateDisplay method
-function DamageMeter:CustomUpdateDisplay(currentValue, displayData)
+function HealingMeter:CustomUpdateDisplay(currentValue, displayData)
     local now = GetTime()
     
-    -- Get damage-specific data
-    local currentDPS = displayData.currentMetric or 0
-    local currentSpellDPS = displayData.currentSpellDPS or 0
-    local currentMeleeDPS = displayData.currentMeleeDPS or 0
+    -- Get healing-specific data
+    local currentHPS = displayData.currentMetric or 0
+    local currentEffectiveHPS = displayData.currentEffectiveHPS or 0
+    local currentAbsorbPS = displayData.currentAbsorbPS or 0
     
     -- Get peak values
-    local recentPeakValue = displayData.peakMetric or 0
+    local recentPeakValue = displayData.peakEffectiveHPS or 0
     
-    -- Update peaks and current values
+    -- Update peaks and current values (use effective HPS for scaling)
     self.state.recentPeak = recentPeakValue
-    self.state.currentValue = currentDPS
-    if currentDPS > self.state.sessionPeak then
-        self.state.sessionPeak = currentDPS
+    self.state.currentValue = currentEffectiveHPS
+    if currentEffectiveHPS > self.state.sessionPeak then
+        self.state.sessionPeak = currentEffectiveHPS
     end
     
-    -- Format main number with auto-scaling
-    local formatted, scale, unit = self:FormatNumberWithScale(currentDPS)
+    -- Ensure recent peak is at least as high as current value
+    if currentEffectiveHPS > self.state.recentPeak then
+        self.state.recentPeak = currentEffectiveHPS
+    end
+    
+    -- Format main number with auto-scaling (show effective HPS)
+    local formatted, scale, unit = self:FormatNumberWithScale(currentEffectiveHPS)
     self.state.currentScale = scale
     self.state.scaleUnit = unit
     
@@ -188,7 +203,7 @@ function DamageMeter:CustomUpdateDisplay(currentValue, displayData)
         end
     end
     
-    -- Update scale indicator with timing logic (same as HealingMeter)
+    -- Update scale indicator with timing logic
     if self.state.scaleText then
         local activityLevel = displayData.activityLevel or 0
         local timeSinceLastUpdate = now - self.state.lastScaleUpdate
@@ -197,7 +212,7 @@ function DamageMeter:CustomUpdateDisplay(currentValue, displayData)
         -- Calculate what the new scale would be
         local newScaleText, newScaleValue = self:GetIntelligentScale()
         
-        -- Determine if we should update the scale
+        -- Determine if we should update the scale (same logic as base class)
         if self.state.lastScaleUpdate == 0 then
             shouldUpdateScale = true
         elseif newScaleValue > self.state.currentScaleMax then
@@ -231,7 +246,7 @@ function DamageMeter:CustomUpdateDisplay(currentValue, displayData)
         end
     end
     
-    -- Update peak text
+    -- Update peak text - show both recent and session peaks for effective HPS
     if self.state.peakText then
         local sessionFormatted = "0"
         local recentFormatted = "0"
@@ -259,28 +274,18 @@ function DamageMeter:CustomUpdateDisplay(currentValue, displayData)
         self.state.petText:SetText("")
     end
     
-    -- Update spell damage text
-    if self.damageUIState.spellText then
-        local spellFormatted, _, spellUnit = self:FormatNumberWithScale(currentSpellDPS)
-        if currentSpellDPS > 0 then
-            self.damageUIState.spellText:SetText(string.format("Spell: %s%s", spellFormatted, spellUnit))
+    -- Update effectiveness text
+    if self.healingUIState.effectivenessText then
+        local effectiveness = displayData.effectivenessPercent or 100
+        if effectiveness < 99.9 then -- Only show if there's meaningful overhealing
+            self.healingUIState.effectivenessText:SetText(string.format("%.1f%% eff", effectiveness))
         else
-            self.damageUIState.spellText:SetText("")
+            self.healingUIState.effectivenessText:SetText("")
         end
     end
     
-    -- Update melee damage text
-    if self.damageUIState.meleeText then
-        local meleeFormatted, _, meleeUnit = self:FormatNumberWithScale(currentMeleeDPS)
-        if currentMeleeDPS > 0 then
-            self.damageUIState.meleeText:SetText(string.format("Melee: %s%s", meleeFormatted, meleeUnit))
-        else
-            self.damageUIState.meleeText:SetText("")
-        end
-    end
-    
-    -- Update activity bar based on DPS vs scale
-    self:UpdateActivityBar(currentDPS)
+    -- Update activity bar based on effective HPS vs scale
+    self:UpdateActivityBar(currentEffectiveHPS)
 end
 
 -- =============================================================================
@@ -288,31 +293,31 @@ end
 -- =============================================================================
 
 -- Override base CustomInitialize method
-function DamageMeter:CustomInitialize()
-    -- Set up event subscriptions for damage events
+function HealingMeter:CustomInitialize()
+    -- Set up event subscriptions for healing events
     if addon.EventBus then
-        -- Subscribe to damage events for immediate feedback
-        addon.EventBus:SubscribeToDamage(function(event)
-            -- Could add damage flash or immediate update here
-        end, "DamageMeterUI")
+        -- Subscribe to healing events for immediate feedback
+        addon.EventBus:SubscribeToHealing(function(event)
+            -- Could add heal flash or immediate update here
+        end, "HealingMeterUI")
     end
     
-    print("[STORMY] DamageMeter: UI initialized with red theme")
+    print("[STORMY] HealingMeter: UI initialized with green theme")
 end
 
 -- =============================================================================
 -- WINDOW POSITIONING
 -- =============================================================================
 
--- Override default position 
-function DamageMeter:CreateMainWindow()
+-- Override default position to avoid overlap with DPS meter
+function HealingMeter:CreateMainWindow()
     -- Call base method first
     local frame = MeterWindow.CreateMainWindow(self)
     
-    -- Adjust default position
-    if frame and not (addon.db and addon.db.DamageWindowPosition) then
+    -- Adjust default position to be offset from DPS meter
+    if frame and not (addon.db and addon.db.HealingWindowPosition) then
         frame:ClearAllPoints()
-        frame:SetPoint("CENTER", UIParent, "CENTER", 100, 0) -- Default position
+        frame:SetPoint("CENTER", UIParent, "CENTER", 100 + 400, 0) -- 400 pixels right of DPS meter
     end
     
     return frame
@@ -322,21 +327,21 @@ end
 -- INITIALIZATION
 -- =============================================================================
 
--- Initialize the damage meter UI
-function DamageMeter:Initialize()
+-- Initialize the healing meter UI
+function HealingMeter:Initialize()
     -- Initialize base class first
     InitializeBaseClass()
     
     if not MeterWindow then
-        error("DamageMeter: Cannot initialize without MeterWindow base class")
+        error("HealingMeter: Cannot initialize without MeterWindow base class")
     end
     
     MeterWindow.Initialize(self)
     
-    print("[STORMY] DamageMeter: Initialized with spell/melee breakdown and red theme")
+    print("[STORMY] HealingMeter: Initialized with absorb tracking and green theme")
 end
 
 -- Module ready
-DamageMeter.isReady = true
+HealingMeter.isReady = true
 
-return DamageMeter
+return HealingMeter

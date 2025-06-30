@@ -17,10 +17,16 @@ Core/Constants.lua
 Core/TablePool.lua
 Core/TimingManager.lua
 Core/EventBus.lua
+Core/MeterManager.lua
+
+# Meter Framework
+Combat/MeterAccumulator.lua
+UI/MeterWindow.lua
 
 # Combat Processing
 Combat/EventProcessor.lua
 Combat/DamageAccumulator.lua
+Combat/HealingAccumulator.lua
 
 # Entity Tracking
 Tracking/EntityTracker.lua
@@ -28,6 +34,7 @@ Tracking/RingBuffer.lua
 
 # UI Components
 UI/DamageMeter.lua
+UI/HealingMeter.lua
 
 # Main Initialization
 STORMY.lua
