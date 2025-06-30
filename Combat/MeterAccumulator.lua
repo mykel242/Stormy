@@ -57,8 +57,7 @@ function MeterAccumulator:New(meterType)
             totalHits = 0,
             
             -- Time tracking
-            firstEventTime = 0,
-            lastEventTime = 0
+            firstEventTime = 0
         },
         
         -- Rolling window data (separate arrays for performance)
@@ -136,8 +135,8 @@ end
 
 -- Store event in rolling data structure
 function MeterAccumulator:StoreEvent(timestamp, amount, isCritical, extraData)
-    -- Use TimingManager as single source of truth for all timestamps
-    local relativeTime = addon.TimingManager:GetCurrentRelativeTime()
+    -- Convert timestamp to relative time using TimingManager
+    local relativeTime = addon.TimingManager:GetRelativeTime(timestamp)
     
     -- Store in values array for fast access
     self.rollingData.values[relativeTime] = (self.rollingData.values[relativeTime] or 0) + amount
@@ -195,6 +194,7 @@ function MeterAccumulator:GetWindowTotals(windowSeconds)
         criticals = critCount,
         duration = windowSeconds,
         metric = windowSeconds > 0 and (totalValue / windowSeconds) or 0,
+        metricPS = windowSeconds > 0 and (totalValue / windowSeconds) or 0,
         critPercent = eventCount > 0 and (critCount / eventCount * 100) or 0
     }
     
@@ -248,18 +248,19 @@ function MeterAccumulator:UpdateCurrentValues()
     
     -- Calculate current values
     local currentWindow = self:GetWindowTotals(WINDOWS.CURRENT)
-    self.state.currentMetric = currentWindow.metric
-    
-    -- Update peaks if current values are higher
-    if self.state.currentMetric > self.state.peakMetric then
-        self.state.peakMetric = self.state.currentMetric
-    end
+    self.state.currentMetric = currentWindow.metricPS or currentWindow.metric
     
     self.state.lastCalculation = now
 end
 
 -- Update peak values with decay
 function MeterAccumulator:UpdatePeaks(currentTime)
+    -- Update peak if current is higher
+    if self.state.currentMetric > self.state.peakMetric then
+        self.state.peakMetric = self.state.currentMetric
+    end
+    
+    -- Apply decay over time
     local elapsed = currentTime - self.state.lastPeakUpdate
     if elapsed > 0 then
         local decayFactor = self.state.peakDecayRate ^ elapsed
@@ -287,12 +288,17 @@ end
 
 -- Get current activity level (0.0 to 1.0)
 function MeterAccumulator:GetActivityLevel()
+    -- No activity if no events yet
+    if self.state.lastEventTime == 0 then
+        return 0.0
+    end
+    
     local timeSinceLastEvent = GetTime() - self.state.lastEventTime
     
     -- Full activity if recent event
     if timeSinceLastEvent < 1.0 then
         return 1.0
-    elseif timeSinceLastEvent < 5.0 then
+    elseif timeSinceLastEvent <= 5.0 then
         -- Decay over 5 seconds
         return 1.0 - ((timeSinceLastEvent - 1.0) / 4.0)
     else
@@ -354,6 +360,8 @@ function MeterAccumulator:GetStats()
         medium = medium,
         
         -- Efficiency
+        totalHits = self.state.totalHits,
+        criticalHits = self.state.criticalHits,
         criticalPercent = self.state.totalHits > 0 and 
                          (self.state.criticalHits / self.state.totalHits * 100) or 0,
         totalCritValue = self.state.totalCritValue,
