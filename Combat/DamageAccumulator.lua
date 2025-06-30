@@ -361,7 +361,7 @@ function DamageAccumulator:Initialize()
     
     MeterAccumulator.Initialize(self)
     
-    print("[STORMY] DamageAccumulator: Initialized with spell/melee tracking")
+    -- DamageAccumulator initialized
 end
 
 -- Module ready

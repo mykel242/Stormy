@@ -145,12 +145,7 @@ function EventProcessor:ProcessEvent(...)
             -- Only print warning once per minute to avoid spam
             local now = GetTime()
             if not circuitBreaker.lastWarning or now - circuitBreaker.lastWarning > 60.0 then
-                print(string.format("[STORMY] Circuit breaker: %d events/frame (limit: %d) - Recent events:", 
-                    circuitBreaker.eventsThisFrame, circuitBreaker.maxEventsPerFrame))
-                
-                -- Debug: Show what events are causing the overload
-                local timestamp, eventType = ...
-                print(string.format("  Last event: %s", eventType or "unknown"))
+                -- Circuit breaker tripped - dropping events
                 circuitBreaker.lastWarning = now
             end
         end
@@ -472,25 +467,25 @@ function EventProcessor:SetCircuitBreakerMode(mode)
         circuitBreaker.currentMode = "auto"
         circuitBreaker.adaptiveEnabled = true
         UpdateAdaptiveLimit()
-        print("[STORMY] Circuit breaker: Auto mode enabled")
+        -- Circuit breaker: Auto mode
     elseif mode == "solo" then
         circuitBreaker.currentMode = "solo"
         circuitBreaker.maxEventsPerFrame = circuitBreaker.baseLimit
-        print(string.format("[STORMY] Circuit breaker: Solo mode, %d events/frame", circuitBreaker.maxEventsPerFrame))
+        -- Circuit breaker: Solo mode
     elseif mode == "raid" then
         circuitBreaker.currentMode = "raid"
         circuitBreaker.maxEventsPerFrame = circuitBreaker.raidLimit
-        print(string.format("[STORMY] Circuit breaker: Raid mode, %d events/frame", circuitBreaker.maxEventsPerFrame))
+        -- Circuit breaker: Raid mode
     elseif mode == "mythic" then
         circuitBreaker.currentMode = "mythic"
         circuitBreaker.maxEventsPerFrame = circuitBreaker.mythicLimit
-        print(string.format("[STORMY] Circuit breaker: Mythic+ mode, %d events/frame", circuitBreaker.maxEventsPerFrame))
+        -- Circuit breaker: Mythic+ mode
     elseif tonumber(mode) then
         local limit = tonumber(mode)
         if limit >= 5 and limit <= 100 then
             circuitBreaker.currentMode = "manual"
             circuitBreaker.maxEventsPerFrame = limit
-            print(string.format("[STORMY] Circuit breaker: Manual mode, %d events/frame", limit))
+            -- Circuit breaker: Manual mode
         else
             print("[STORMY] Invalid limit. Use 5-100.")
         end

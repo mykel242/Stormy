@@ -302,7 +302,7 @@ function HealingMeter:CustomInitialize()
         end, "HealingMeterUI")
     end
     
-    print("[STORMY] HealingMeter: UI initialized with green theme")
+    -- HealingMeter UI initialized
 end
 
 -- =============================================================================
@@ -338,7 +338,7 @@ function HealingMeter:Initialize()
     
     MeterWindow.Initialize(self)
     
-    print("[STORMY] HealingMeter: Initialized with absorb tracking and green theme")
+    -- HealingMeter initialized
 end
 
 -- Module ready

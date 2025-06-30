@@ -29,7 +29,7 @@ local config = {
 -- Register a new meter type
 function MeterManager:RegisterMeter(meterType, accumulator, window)
     if registeredMeters[meterType] then
-        print(string.format("[STORMY] MeterManager: Meter type '%s' already registered", meterType))
+        -- Meter type already registered
         return false
     end
     
@@ -43,7 +43,7 @@ function MeterManager:RegisterMeter(meterType, accumulator, window)
     
     registeredAccumulators[meterType] = accumulator
     
-    print(string.format("[STORMY] MeterManager: Registered meter type '%s'", meterType))
+    -- Meter type registered
     return true
 end
 
@@ -59,7 +59,7 @@ function MeterManager:UnregisterMeter(meterType)
     registeredMeters[meterType] = nil
     registeredAccumulators[meterType] = nil
     
-    print(string.format("[STORMY] MeterManager: Unregistered meter type '%s'", meterType))
+    -- Meter type unregistered
     return true
 end
 
@@ -136,17 +136,17 @@ end
 function MeterManager:ShowMeter(meterType)
     local meterInfo = registeredMeters[meterType]
     if not meterInfo then
-        print(string.format("[STORMY] MeterManager: Unknown meter type '%s'", meterType))
+        -- Unknown meter type
         return false
     end
     
     if not meterInfo.enabled then
-        print(string.format("[STORMY] MeterManager: Meter type '%s' is disabled", meterType))
+        -- Meter type is disabled
         return false
     end
     
     if meterInfo.visible then
-        print(string.format("[STORMY] MeterManager: Meter '%s' is already visible", meterType))
+        -- Meter is already visible
         return true
     end
     
@@ -159,11 +159,11 @@ function MeterManager:ShowMeter(meterType)
     if meterInfo.window and meterInfo.window.Show then
         meterInfo.window:Show()
         meterInfo.visible = true
-        print(string.format("[STORMY] MeterManager: Showed meter '%s'", meterType))
+        -- Meter shown
         return true
     end
     
-    print(string.format("[STORMY] MeterManager: Failed to show meter '%s' - no window available", meterType))
+    -- Failed to show meter - no window available
     return false
 end
 
@@ -171,12 +171,12 @@ end
 function MeterManager:HideMeter(meterType)
     local meterInfo = registeredMeters[meterType]
     if not meterInfo then
-        print(string.format("[STORMY] MeterManager: Unknown meter type '%s'", meterType))
+        -- Unknown meter type
         return false
     end
     
     if not meterInfo.visible then
-        print(string.format("[STORMY] MeterManager: Meter '%s' is already hidden", meterType))
+        -- Meter is already hidden
         return true
     end
     
@@ -184,7 +184,7 @@ function MeterManager:HideMeter(meterType)
     if meterInfo.window and meterInfo.window.Hide then
         meterInfo.window:Hide()
         meterInfo.visible = false
-        print(string.format("[STORMY] MeterManager: Hid meter '%s'", meterType))
+        -- Meter hidden
         return true
     end
     
@@ -195,7 +195,7 @@ end
 function MeterManager:ToggleMeter(meterType)
     local meterInfo = registeredMeters[meterType]
     if not meterInfo then
-        print(string.format("[STORMY] MeterManager: Unknown meter type '%s'", meterType))
+        -- Unknown meter type
         return false
     end
     
@@ -214,7 +214,7 @@ function MeterManager:ShowAllMeters()
             shown = shown + 1
         end
     end
-    print(string.format("[STORMY] MeterManager: Showed %d meters", shown))
+    -- Showed meters
     return shown
 end
 
@@ -226,7 +226,7 @@ function MeterManager:HideAllMeters()
             hidden = hidden + 1
         end
     end
-    print(string.format("[STORMY] MeterManager: Hid %d meters", hidden))
+    -- Hid meters
     return hidden
 end
 
@@ -276,9 +276,7 @@ function MeterManager:SetAutoPositioning(enabled, offset, basePos)
         config.basePosition = basePos
     end
     
-    print(string.format("[STORMY] MeterManager: Auto-positioning %s (offset: %d)", 
-               enabled and "enabled" or "disabled", 
-               config.positionOffset))
+    -- Auto-positioning configuration updated
 end
 
 -- =============================================================================
@@ -289,7 +287,7 @@ end
 function MeterManager:SetMeterEnabled(meterType, enabled)
     local meterInfo = registeredMeters[meterType]
     if not meterInfo then
-        print(string.format("[STORMY] MeterManager: Unknown meter type '%s'", meterType))
+        -- Unknown meter type
         return false
     end
     
@@ -300,7 +298,7 @@ function MeterManager:SetMeterEnabled(meterType, enabled)
         self:HideMeter(meterType)
     end
     
-    print(string.format("[STORMY] MeterManager: Meter '%s' %s", meterType, enabled and "enabled" or "disabled"))
+    -- Meter enabled/disabled
     return true
 end
 
@@ -330,7 +328,7 @@ function MeterManager:ResetAllMeters()
         end
     end
     
-    print(string.format("[STORMY] MeterManager: Reset %d meters", resetCount))
+    -- Meters reset
     return resetCount
 end
 
@@ -417,7 +415,7 @@ function MeterManager:Initialize()
     
     self.maintenanceTimer = maintenanceTimer
     
-    print("[STORMY] MeterManager: Initialized")
+    -- MeterManager initialized
 end
 
 -- Module ready

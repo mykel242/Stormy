@@ -79,13 +79,7 @@ function addon:OnInitialize()
     -- print(string.format("[STORMY] Initializing v%s...", self.VERSION))
     -- print(string.format("[STORMY] Build: %s", addon._buildHash))
     
-    -- Debug: List available modules
-    print("[STORMY] Available modules:")
-    for k, v in pairs(self) do
-        if type(v) == "table" and k ~= "defaults" and k ~= "db" and not k:match("^_") then
-            print(string.format("  - %s: %s", k, type(v)))
-        end
-    end
+    -- Module availability checked
     
     -- Core foundation
     if self.TablePool then
@@ -135,91 +129,70 @@ function addon:OnInitialize()
     
     -- Meter framework
     if self.MeterManager then
-        print("[STORMY] MeterManager found, initializing...")
+        -- MeterManager initialization
         self.MeterManager:Initialize()
-        print("[STORMY] MeterManager initialized")
     else
-        print("[STORMY] MeterManager module not found!")
+        -- MeterManager module not found
     end
     
     -- Initialize HealingAccumulator (create instance)
     if self.HealingAccumulator then
-        print("[STORMY] Creating HealingAccumulator instance...")
+        -- HealingAccumulator initialization
         local success, result = pcall(function()
             self.HealingAccumulator = self.HealingAccumulator:New()
             self.HealingAccumulator:Initialize()
         end)
-        if success then
-            print("[STORMY] HealingAccumulator initialized successfully")
-        else
-            print("[STORMY] HealingAccumulator initialization failed:", result)
-        end
     else
-        print("[STORMY] HealingAccumulator module not found!")
+        -- HealingAccumulator module not found
     end
     
     -- Initialize HealingMeter (create instance)
     if self.HealingMeter then
-        print("[STORMY] Creating HealingMeter instance...")
+        -- HealingMeter initialization
         local success, result = pcall(function()
             self.HealingMeter = self.HealingMeter:New()
             self.HealingMeter:Initialize()
         end)
-        if success then
-            print("[STORMY] HealingMeter initialized successfully")
-        else
-            print("[STORMY] HealingMeter initialization failed:", result)
-        end
     else
-        print("[STORMY] HealingMeter module not found!")
+        -- HealingMeter module not found
     end
     
     
     -- Initialize DamageMeter (create instance)
     if self.DamageMeter then
-        print("[STORMY] Creating DamageMeter instance...")
+        -- DamageMeter initialization
         local success, result = pcall(function()
             self.DamageMeter = self.DamageMeter:New()
             self.DamageMeter:Initialize()
         end)
-        if success then
-            print("[STORMY] DamageMeter initialized successfully")
-        else
-            print("[STORMY] DamageMeter initialization failed:", result)
-        end
     else
-        print("[STORMY] DamageMeter module not found!")
+        -- DamageMeter module not found
     end
     
     -- Initialize DamageAccumulator (create instance)
     if self.DamageAccumulator then
-        print("[STORMY] Creating DamageAccumulator instance...")
+        -- DamageAccumulator initialization
         local success, result = pcall(function()
             self.DamageAccumulator = self.DamageAccumulator:New()
             self.DamageAccumulator:Initialize()
         end)
-        if success then
-            print("[STORMY] DamageAccumulator initialized successfully")
-        else
-            print("[STORMY] DamageAccumulator initialization failed:", result)
-        end
     else
-        print("[STORMY] DamageAccumulator module not found!")
+        -- DamageAccumulator module not found
     end
     
     -- Register meters with MeterManager (after all components are initialized)
     if self.MeterManager and self.DamageAccumulator and self.DamageMeter then
         self.MeterManager:RegisterMeter("Damage", self.DamageAccumulator, self.DamageMeter)
-        print("[STORMY] Registered Damage meter")
+        -- Damage meter registered
     else
-        print("[STORMY] Failed to register Damage meter - MeterManager:", self.MeterManager ~= nil, "DamageAccumulator:", self.DamageAccumulator ~= nil, "DamageMeter:", self.DamageMeter ~= nil)
+        -- Failed to register Damage meter
     end
     
     if self.MeterManager and self.HealingAccumulator and self.HealingMeter then
         self.MeterManager:RegisterMeter("Healing", self.HealingAccumulator, self.HealingMeter)
-        print("[STORMY] Registered Healing meter")
+        -- Healing meter registered
     else
-        print("[STORMY] Failed to register Healing meter - MeterManager:", self.MeterManager ~= nil, "HealingAccumulator:", self.HealingAccumulator ~= nil, "HealingMeter:", self.HealingMeter ~= nil)
+        -- Failed to register Healing meter
     end
     
     -- print("[STORMY] Initialization complete!")

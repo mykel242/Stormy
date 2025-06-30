@@ -297,7 +297,7 @@ function DamageMeter:CustomInitialize()
         end, "DamageMeterUI")
     end
     
-    print("[STORMY] DamageMeter: UI initialized with red theme")
+    -- DamageMeter UI initialized
 end
 
 -- =============================================================================
@@ -333,7 +333,7 @@ function DamageMeter:Initialize()
     
     MeterWindow.Initialize(self)
     
-    print("[STORMY] DamageMeter: Initialized with spell/melee breakdown and red theme")
+    -- DamageMeter initialized
 end
 
 -- Module ready

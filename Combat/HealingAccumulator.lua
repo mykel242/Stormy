@@ -441,7 +441,7 @@ function HealingAccumulator:Initialize()
     
     MeterAccumulator.Initialize(self)
     
-    print("[STORMY] HealingAccumulator: Initialized with absorb tracking")
+    -- HealingAccumulator initialized
 end
 
 -- Module ready
