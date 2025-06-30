@@ -137,31 +137,7 @@ describe("MeterManager", function()
         end)
     end)
     
-    describe("RouteAbsorbEvent", function()
-        before_each(function()
-            MeterManager:Initialize()
-        end)
-        
-        it("should route absorb events to healing accumulator", function()
-            local eventReceived = false
-            local absorbAmount = 0
-            
-            local mockAccumulator = {
-                AddEvent = function(self, timestamp, sourceGUID, amount, isPlayer, isPet, isCritical, extraData)
-                    eventReceived = true
-                    -- For absorbs, the amount is the absorb amount
-                    assert.equals(750, amount)
-                    assert.equals(750, extraData.absorbAmount)
-                    assert.equals(0, extraData.overhealing)
-                end
-            }
-            
-            MeterManager:RegisterMeter("Healing", mockAccumulator, {})
-            MeterManager:RouteAbsorbEvent(100, "player-guid", 750, true, false)
-            
-            assert.is_true(eventReceived)
-        end)
-    end)
+    -- Note: RouteAbsorbEvent was removed as absorb functionality was simplified out
     
     describe("Meter Control", function()
         local mockWindow
@@ -192,7 +168,9 @@ describe("MeterManager", function()
         
         it("should hide meter", function()
             MeterManager:RegisterMeter("Test", {}, mockWindow)
-            mockWindow.isShown = true
+            -- First show the meter so it's marked as visible
+            MeterManager:ShowMeter("Test")
+            assert.is_true(mockWindow.isShown)
             
             local result = MeterManager:HideMeter("Test")
             

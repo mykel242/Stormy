@@ -300,8 +300,16 @@ end
 function helpers.load_module_at_path(path, addon)
     local full_path = path
     if not full_path:match("^/") then
-        -- Relative path - prepend the stormy directory
-        full_path = "/Users/mykel/Development/wow/Stormy/" .. path
+        -- Relative path - determine the correct base directory
+        local base_dir = debug.getinfo(1, "S").source:match("@(.*/)")
+        if base_dir then
+            -- Remove tests/ from the end to get addon root
+            base_dir = base_dir:gsub("tests/$", "")
+            full_path = base_dir .. path
+        else
+            -- Fallback to development directory
+            full_path = "/Users/mykel/Development/wow/Stormy/" .. path
+        end
     end
     
     -- Load the file with the addon context
@@ -320,5 +328,8 @@ end
 for k, v in pairs(helpers) do
     mock[k] = v
 end
+
+-- Automatically apply mocks when spec_helper is loaded
+mock.apply()
 
 return mock
