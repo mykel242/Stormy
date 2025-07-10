@@ -1,77 +1,93 @@
-# Rolling Window Plot Feature Plan
+# Rolling Window Plot Feature Plan (Simplified)
 
 ## Overview
-Add a real-time scrolling plot window that visualizes DPS/HPS metrics over time, with data points moving from right to left.
+Add a real-time scrolling plot window that visualizes DPS/HPS metrics over time by querying existing accumulator data.
 
 ## Architecture
 
 ### 1. Core Components
 
-#### PlotWindow.lua (Base Class)
+#### MetricsPlot.lua (Standalone Plot Window)
 ```lua
--- Base class for plot visualization
-addon.PlotWindow = {
+-- Lightweight plot window that queries accumulators
+addon.MetricsPlot = {
     -- Configuration
     width = 400,
     height = 200,
     backgroundColor = {0.1, 0.1, 0.1, 0.9},
     gridColor = {0.3, 0.3, 0.3, 0.5},
     
-    -- Data management
-    maxDataPoints = 120,  -- 2 minutes at 1 update/sec
-    dataBuffer = {},      -- Circular buffer
+    -- Plot settings
+    timeWindow = 60,      -- Show last 60 seconds
+    sampleRate = 1,       -- Sample every 1 second
+    updateRate = 0.25,    -- Refresh plot at 4 FPS
     
-    -- Performance
-    updateRate = 0.25,    -- 4 FPS update rate
-    texturePool = {}      -- Reuse textures
-}
-```
-
-#### MetricsPlot.lua (DPS/HPS Implementation)
-```lua
--- Extends PlotWindow for metrics plotting
-addon.MetricsPlot = {
-    -- Plot both DPS and HPS
-    metrics = {
-        dps = { color = {1, 0.2, 0.2, 1}, data = {} },
-        hps = { color = {0.2, 1, 0.2, 1}, data = {} }
-    },
+    -- Texture pooling for performance
+    texturePool = {},
+    maxTextures = 200,
     
     -- Y-axis auto-scaling
     autoScale = true,
-    maxValue = 100000,
-    
-    -- Time window options
-    timeWindows = { 30, 60, 120 },
-    currentWindow = 60
+    maxValue = 100000
 }
 ```
 
-### 2. Data Flow
+### 2. Data Flow (Simplified)
 
-1. **Event Bus Integration**
-   - Subscribe to "METRIC_UPDATE" events
-   - Receive DPS/HPS updates from accumulators
-   - Timestamp each data point
-
-2. **Circular Buffer Management**
+1. **Direct Accumulator Queries**
    ```lua
-   function MetricsPlot:AddDataPoint(metric, value)
-       local point = {
-           timestamp = GetTime(),
-           value = value
-       }
+   function MetricsPlot:UpdateData()
+       -- Query accumulators directly
+       local now = addon.TimingManager:GetCurrentRelativeTime()
+       local startTime = now - self.timeWindow
        
-       -- Circular buffer logic
-       local buffer = self.metrics[metric].data
-       buffer[self.writeIndex] = point
-       self.writeIndex = (self.writeIndex % self.maxDataPoints) + 1
+       -- Get DPS data points from accumulator's rolling window
+       self.dpsPoints = self:SampleAccumulatorData(
+           addon.DamageAccumulator.rollingData.values,
+           startTime, now, self.sampleRate
+       )
+       
+       -- Get HPS data points
+       self.hpsPoints = self:SampleAccumulatorData(
+           addon.HealingAccumulator.rollingData.values,
+           startTime, now, self.sampleRate
+       )
+   end
+   ```
+
+2. **Sampling Method**
+   ```lua
+   function MetricsPlot:SampleAccumulatorData(rollingData, startTime, endTime, sampleRate)
+       local points = {}
+       local currentTime = startTime
+       
+       while currentTime <= endTime do
+           local windowEnd = currentTime
+           local windowStart = currentTime - 5  -- 5s rolling window
+           local sum = 0
+           
+           -- Sum values in this sample's window
+           for timestamp, value in pairs(rollingData) do
+               if timestamp >= windowStart and timestamp <= windowEnd then
+                   sum = sum + value
+               end
+           end
+           
+           table.insert(points, {
+               time = currentTime,
+               value = sum / 5  -- DPS/HPS
+           })
+           
+           currentTime = currentTime + sampleRate
+       end
+       
+       return points
    end
    ```
 
 3. **Rendering Pipeline**
-   - Update only on timer (not every frame)
-   - Calculate visible data range
+   - Timer-based updates (not per frame)
+   - Query accumulators on timer tick
    - Draw grid, axes, labels
    - Draw plot lines using texture pool
 
@@ -134,15 +150,11 @@ addon.MetricsPlot = {
    addon.MeterManager:RegisterMeter("Plot", nil, addon.MetricsPlot)
    ```
 
-2. **EventBus Subscription**
+2. **Direct Accumulator Access**
    ```lua
-   addon.EventBus:Subscribe("METRIC_UPDATE", function(data)
-       if data.metric == "DPS" then
-           metricsPlot:AddDataPoint("dps", data.value)
-       elseif data.metric == "HPS" then
-           metricsPlot:AddDataPoint("hps", data.value)
-       end
-   end)
+   -- No EventBus needed - just query accumulators directly
+   local dpsData = addon.DamageAccumulator.rollingData.values
+   local hpsData = addon.HealingAccumulator.rollingData.values
    ```
 
 3. **Slash Commands**
@@ -152,32 +164,32 @@ addon.MetricsPlot = {
 
 ### 6. Implementation Steps
 
-1. **Phase 1: Base Infrastructure**
-   - Create PlotWindow base class
+1. **Phase 1: Basic Plot Window**
+   - Create MetricsPlot window frame
    - Implement texture pooling
-   - Add basic frame and drawing
+   - Add timer for periodic updates
 
-2. **Phase 2: Data Management**
-   - Implement circular buffer
-   - Add EventBus integration
-   - Handle data point storage
+2. **Phase 2: Data Sampling**
+   - Query accumulator rolling data
+   - Sample at fixed intervals
+   - Handle missing/sparse data
 
 3. **Phase 3: Rendering**
    - Draw grid and axes
-   - Implement line drawing
+   - Plot lines from sampled data
    - Add auto-scaling
 
 4. **Phase 4: Polish**
    - Add interactive controls
-   - Implement smooth scrolling
+   - Implement time window selection
    - Add visual effects
 
 ### 7. Performance Targets
 
-- Memory: < 500KB for 2 minutes of data
-- CPU: < 1% usage during normal operation
+- Memory: No additional data storage (uses existing accumulators)
+- CPU: < 0.5% usage during normal operation
 - Update rate: 4 FPS (configurable)
-- Latency: < 250ms from event to visual update
+- Zero memory allocations in render loop
 
 ### 8. Future Enhancements
 
