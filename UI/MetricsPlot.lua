@@ -84,7 +84,7 @@ end
 -- DATA SAMPLING
 -- =============================================================================
 
--- Sample accumulator data over time window
+-- Sample accumulator data over time window using the same method as MeterAccumulator
 function MetricsPlot:SampleAccumulatorData(rollingData, startTime, endTime, windowSize)
     if not rollingData then
         return {}
@@ -94,19 +94,27 @@ function MetricsPlot:SampleAccumulatorData(rollingData, startTime, endTime, wind
     local currentTime = startTime
     
     while currentTime <= endTime do
-        local windowStart = currentTime - windowSize
-        local windowEnd = currentTime
+        -- Use the same calculation method as MeterAccumulator:GetWindowTotals
+        local cutoffTime = currentTime - windowSize
         local sum = 0
+        local pointCount = 0
         
-        -- Sum values in this sample's window
+        -- Sum values in window using the same logic as the accumulator
         for timestamp, value in pairs(rollingData) do
-            if type(timestamp) == "number" and timestamp >= windowStart and timestamp <= windowEnd then
+            if type(timestamp) == "number" and timestamp >= cutoffTime then
                 sum = sum + value
+                pointCount = pointCount + 1
             end
         end
         
-        -- Calculate rate (per second)
+        -- Calculate rate (per second) - same as accumulator's metricPS calculation
         local rate = windowSize > 0 and (sum / windowSize) or 0
+        
+        -- Debug: Log sampling details for first few points
+        if #points < 5 and pointCount > 0 then
+            print(string.format("Sample at %.1f: window [%.1f-%.1f], %d points, sum=%.0f, rate=%.0f", 
+                  currentTime, cutoffTime, currentTime, pointCount, sum, rate))
+        end
         
         table.insert(points, {
             time = currentTime,
