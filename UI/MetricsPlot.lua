@@ -110,11 +110,11 @@ function MetricsPlot:SampleAccumulatorData(rollingData, startTime, endTime, wind
         -- Calculate rate (per second) - same as accumulator's metricPS calculation
         local rate = windowSize > 0 and (sum / windowSize) or 0
         
-        -- Debug: Log sampling details for first few points
-        if #points < 5 and pointCount > 0 then
-            print(string.format("Sample at %.1f: window [%.1f-%.1f], %d points, sum=%.0f, rate=%.0f", 
-                  currentTime, cutoffTime, currentTime, pointCount, sum, rate))
-        end
+        -- Debug: Log sampling details for first few points (disabled to reduce spam)
+        -- if #points < 5 and pointCount > 0 then
+        --     print(string.format("Sample at %.1f: window [%.1f-%.1f], %d points, sum=%.0f, rate=%.0f", 
+        --           currentTime, cutoffTime, currentTime, pointCount, sum, rate))
+        -- end
         
         table.insert(points, {
             time = currentTime,
@@ -143,14 +143,14 @@ function MetricsPlot:UpdateData()
             startTime, now, 5  -- 5-second rolling window for DPS
         )
         
-        -- Debug: Check if we have DPS data
-        if #self.dpsPoints > 0 then
-            local maxDPS = 0
-            for _, point in ipairs(self.dpsPoints) do
-                maxDPS = math.max(maxDPS, point.value)
-            end
-            -- print(string.format("DPS Points: %d, Max: %.0f", #self.dpsPoints, maxDPS))
-        end
+        -- Debug: Check if we have DPS data (disabled to reduce spam)
+        -- if #self.dpsPoints > 0 then
+        --     local maxDPS = 0
+        --     for _, point in ipairs(self.dpsPoints) do
+        --         maxDPS = math.max(maxDPS, point.value)
+        --     end
+        --     print(string.format("DPS Points: %d, Max: %.0f", #self.dpsPoints, maxDPS))
+        -- end
     else
         self.dpsPoints = {}
     end
@@ -162,14 +162,14 @@ function MetricsPlot:UpdateData()
             startTime, now, 5  -- 5-second rolling window for HPS
         )
         
-        -- Debug: Check if we have HPS data
-        if #self.hpsPoints > 0 then
-            local maxHPS = 0
-            for _, point in ipairs(self.hpsPoints) do
-                maxHPS = math.max(maxHPS, point.value)
-            end
-            -- print(string.format("HPS Points: %d, Max: %.0f", #self.hpsPoints, maxHPS))
-        end
+        -- Debug: Check if we have HPS data (disabled to reduce spam)
+        -- if #self.hpsPoints > 0 then
+        --     local maxHPS = 0
+        --     for _, point in ipairs(self.hpsPoints) do
+        --         maxHPS = math.max(maxHPS, point.value)
+        --     end
+        --     print(string.format("HPS Points: %d, Max: %.0f", #self.hpsPoints, maxHPS))
+        -- end
     else
         self.hpsPoints = {}
     end
