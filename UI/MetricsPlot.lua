@@ -251,8 +251,9 @@ function MetricsPlot:DataToScreen(time, value, maxValue)
     local x = 60 + (normalizedTime * plotWidth)  -- 60px left margin for HPS labels
     
     -- Value to Y coordinate using the provided max value
+    -- FIX: Y coordinates should go UP as values increase (bottom to top)
     local normalizedValue = maxValue > 0 and (value / maxValue) or 0
-    local y = 30 + (normalizedValue * plotHeight)  -- 30px bottom margin
+    local y = (self.config.height - 30) - (normalizedValue * plotHeight)  -- Invert Y: higher values = higher Y
     
     return x, y
 end
@@ -262,9 +263,9 @@ function MetricsPlot:DrawGrid()
     local plotWidth = self.config.width - 80  -- Space for labels on both sides
     local plotHeight = self.config.height - 40
     
-    -- Horizontal grid lines
+    -- Horizontal grid lines (fixed for inverted Y coordinates)
     for i = 0, self.config.gridLines do
-        local y = 30 + (i / self.config.gridLines) * plotHeight
+        local y = (self.config.height - 30) - (i / self.config.gridLines) * plotHeight  -- Invert Y for grid
         
         -- Grid line
         local texture = self:GetTexture()
@@ -280,7 +281,7 @@ function MetricsPlot:DrawGrid()
     end
     
     for i = 0, self.config.gridLines do
-        local y = 30 + (i / self.config.gridLines) * plotHeight
+        local y = (self.config.height - 30) - (i / self.config.gridLines) * plotHeight  -- Invert Y for labels
         
         if not self.hpsLabels[i] then
             self.hpsLabels[i] = self.plotFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -299,7 +300,7 @@ function MetricsPlot:DrawGrid()
     end
     
     for i = 0, self.config.gridLines do
-        local y = 30 + (i / self.config.gridLines) * plotHeight
+        local y = (self.config.height - 30) - (i / self.config.gridLines) * plotHeight  -- Invert Y for labels
         
         if not self.dpsLabels[i] then
             self.dpsLabels[i] = self.plotFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
