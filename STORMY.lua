@@ -34,6 +34,8 @@ addon.defaults = {
     -- Window settings
     showMainWindow = false,
     showHealingWindow = false,
+    showDPSPlotWindow = true,
+    showHPSPlotWindow = false,
     windowPosition = { point = "CENTER", x = 0, y = 0 },
     windowScale = 1.0,
     
@@ -157,12 +159,17 @@ function addon:OnInitialize()
         -- HealingMeter module not found
     end
     
-    -- Initialize MetricsPlot (create instance)
+    -- Initialize MetricsPlot instances (DPS and HPS)
     if self.MetricsPlot then
-        -- MetricsPlot initialization
+        -- DPS Plot initialization
         local success, result = pcall(function()
-            self.MetricsPlot = self.MetricsPlot:New()
-            self.MetricsPlot:Initialize()
+            self.DPSPlot = self.MetricsPlot:New("DPS")
+            self.DPSPlot:Initialize()
+        end)
+        -- HPS Plot initialization
+        success, result = pcall(function()
+            self.HPSPlot = self.MetricsPlot:New("HPS")
+            self.HPSPlot:Initialize()
         end)
     else
         -- MetricsPlot module not found
@@ -206,11 +213,14 @@ function addon:OnInitialize()
         -- Failed to register Healing meter
     end
     
-    if self.MeterManager and self.MetricsPlot then
-        self.MeterManager:RegisterMeter("Plot", nil, self.MetricsPlot)
-        -- Metrics plot registered
-    else
-        -- Failed to register Metrics plot
+    if self.MeterManager and self.DPSPlot then
+        self.MeterManager:RegisterMeter("DPSPlot", nil, self.DPSPlot)
+        -- DPS plot registered
+    end
+    
+    if self.MeterManager and self.HPSPlot then
+        self.MeterManager:RegisterMeter("HPSPlot", nil, self.HPSPlot)
+        -- HPS plot registered
     end
     
     -- print("[STORMY] Initialization complete!")
@@ -231,6 +241,12 @@ function addon:OnEnable()
         if self.db.showHealingWindow and self.HealingMeter then
             self.HealingMeter:Show()
         end
+        if self.db.showDPSPlotWindow and self.DPSPlot then
+            self.DPSPlot:Show()
+        end
+        if self.db.showHPSPlotWindow and self.HPSPlot then
+            self.HPSPlot:Show()
+        end
     end
 end
 
@@ -249,6 +265,16 @@ function addon:OnDisable()
     if self.HealingMeter then
         local isVisible = self.HealingMeter:IsVisible()
         self.db.showHealingWindow = isVisible
+    end
+    
+    if self.DPSPlot then
+        local isVisible = self.DPSPlot:IsVisible()
+        self.db.showDPSPlotWindow = isVisible
+    end
+    
+    if self.HPSPlot then
+        local isVisible = self.HPSPlot:IsVisible()
+        self.db.showHPSPlotWindow = isVisible
     end
     
     -- print("[STORMY] Disabled and state saved")
@@ -337,17 +363,26 @@ SlashCmdList["STORMY"] = function(msg)
         else
             print("[STORMY] HPS meter not available")
         end
-    elseif command == "plot" then
+    elseif command == "plot" or command == "dpsplot" then
         if addon.MeterManager then
-            addon.MeterManager:ToggleMeter("Plot")
+            addon.MeterManager:ToggleMeter("DPSPlot")
         else
-            print("[STORMY] Metrics plot not available")
+            print("[STORMY] DPS plot not available")
+        end
+    elseif command == "hpsplot" then
+        if addon.MeterManager then
+            addon.MeterManager:ToggleMeter("HPSPlot")
+        else
+            print("[STORMY] HPS plot not available")
         end
     elseif command == "plotdebug" then
-        if addon.MetricsPlot then
-            addon.MetricsPlot:Debug()
-        else
-            print("[STORMY] Metrics plot not available")
+        if addon.DPSPlot then
+            print("=== DPS Plot Debug ===")
+            addon.DPSPlot:Debug()
+        end
+        if addon.HPSPlot then
+            print("=== HPS Plot Debug ===")
+            addon.HPSPlot:Debug()
         end
     elseif command:match("^cb%s") then
         -- Circuit breaker commands: /stormy cb auto|solo|raid|mythic|<number>
@@ -365,7 +400,8 @@ SlashCmdList["STORMY"] = function(msg)
         print("  /stormy show - Toggle damage meter")
         print("  /stormy dps - Toggle DPS meter")
         print("  /stormy hps - Toggle HPS meter")
-        print("  /stormy plot - Toggle metrics plot")
+        print("  /stormy plot - Toggle DPS plot")
+        print("  /stormy hpsplot - Toggle HPS plot")
         print("  /stormy plotdebug - Debug plot data")
         print("  /stormy debug - Show debug information")
         print("  /stormy reset - Reset statistics")

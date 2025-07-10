@@ -31,7 +31,7 @@ local UI_CONFIG = {
     SEGMENT_SPACING = 2,
     
     -- Colors
-    COLOR_BACKGROUND = {0, 0, 0, 0.95},
+    COLOR_BACKGROUND = {0, 0, 0, 0.5},
     COLOR_TEXT_PRIMARY = {1, 1, 1, 1},
     COLOR_TEXT_SECONDARY = {0.7, 0.7, 0.7, 1},
     COLOR_TEXT_DIM = {0.5, 0.5, 0.5, 1},
@@ -76,8 +76,8 @@ function MeterWindow:New(meterType, config)
             scaleUnit = "",
             
             -- Time window mode
-            windowMode = "CURRENT",  -- CURRENT (5s), SHORT (15s), MEDIUM (30s), LONG (60s)
-            windowSeconds = 5,
+            windowMode = "SHORT",  -- CURRENT (5s), SHORT (15s), MEDIUM (30s), LONG (60s)
+            windowSeconds = 15,
             
             -- Peak tracking
             sessionPeak = 0,      -- Never decays (session-wide)
@@ -241,7 +241,7 @@ function MeterWindow:CreateDisplayElements(parent, largeFont, mediumFont, smallF
     self.state.modeText = windowButton:CreateFontString(nil, "OVERLAY")
     self.state.modeText:SetFontObject(smallFont)
     self.state.modeText:SetAllPoints()
-    self.state.modeText:SetText("5 sec")
+    self.state.modeText:SetText("15 sec")  -- Match default windowSeconds
     self.state.modeText:SetTextColor(unpack(self.config.COLOR_TEXT_DIM))
     
     -- Highlight on hover

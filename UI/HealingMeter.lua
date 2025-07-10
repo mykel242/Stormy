@@ -115,7 +115,7 @@ end
 -- Override base GetDisplayData method
 function HealingMeter:GetDisplayData()
     if addon.HealingAccumulator then
-        return addon.HealingAccumulator:GetDisplayData()
+        return addon.HealingAccumulator:GetDisplayData(self.state.windowSeconds)
     end
     
     -- Fallback empty data
@@ -135,6 +135,11 @@ function HealingMeter:GetDisplayData()
         totalAbsorbs = 0,
         effectivenessPercent = 100
     }
+end
+
+-- Get current window setting for plot integration
+function HealingMeter:GetCurrentWindow()
+    return self.state.windowSeconds
 end
 
 -- Override base GetActivityLevel method

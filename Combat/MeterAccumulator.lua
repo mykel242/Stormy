@@ -225,6 +225,39 @@ function MeterAccumulator:GetWindowTotals(windowSeconds)
     return result
 end
 
+-- Get time series data for plotting (aligned to fixed bucket boundaries)
+function MeterAccumulator:GetTimeSeriesData(startTime, endTime, bucketSize)
+    bucketSize = bucketSize or 1  -- Default to 1-second buckets
+    
+    local buckets = {}
+    
+    -- Align start time to bucket boundary (floor to nearest bucket)
+    local alignedStartTime = math.floor(startTime / bucketSize) * bucketSize
+    local currentTime = alignedStartTime
+    
+    -- Create time buckets aligned to fixed boundaries
+    while currentTime <= endTime do
+        local bucketEnd = currentTime + bucketSize
+        local totalValue = 0
+        
+        -- Sum all events in this time bucket
+        for timestamp, amount in pairs(self.rollingData.values) do
+            if type(timestamp) == "number" and timestamp >= currentTime and timestamp < bucketEnd then
+                totalValue = totalValue + amount
+            end
+        end
+        
+        table.insert(buckets, {
+            time = currentTime,
+            value = totalValue  -- Raw total damage/healing in this bucket
+        })
+        
+        currentTime = currentTime + bucketSize
+    end
+    
+    return buckets
+end
+
 -- Clean old data beyond maximum window
 function MeterAccumulator:CleanOldData()
     local maxWindow = WINDOWS.LONG
@@ -416,25 +449,30 @@ function MeterAccumulator:GetStats()
     return stats
 end
 
--- Get simple display data (for UI)
-function MeterAccumulator:GetDisplayData()
+-- Get simple display data (for UI) for specific window
+function MeterAccumulator:GetDisplayData(windowSeconds)
+    windowSeconds = windowSeconds or 5  -- Default to 5 seconds for backward compatibility
+    
     local stats = self:GetStats()
+    local windowData = self:GetWindowTotals(windowSeconds)
     
     local displayData = {
-        currentMetric = math.floor(stats.currentMetric),
-        peakMetric = math.floor(stats.peakMetric),
+        currentMetric = math.floor(windowData.metricPS),
+        peakMetric = math.floor(stats.peakMetric),  -- Keep global peak
         totalValue = stats.totalValue,
         playerValue = stats.playerValue,
         petValue = stats.petValue,
         critPercent = math.floor(stats.criticalPercent * 10) / 10, -- One decimal
         activityLevel = stats.activityLevel,
         encounterTime = math.floor(stats.encounterDuration),
-        meterType = self.meterType
+        meterType = self.meterType,
+        windowSeconds = windowSeconds,
+        windowData = windowData  -- Include full window data for multi-window display
     }
     
     -- Allow subclasses to modify display data
     if self.ModifyDisplayData then
-        self:ModifyDisplayData(displayData, stats)
+        self:ModifyDisplayData(displayData, stats, windowData)
     end
     
     return displayData

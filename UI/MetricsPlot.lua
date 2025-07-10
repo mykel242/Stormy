@@ -11,16 +11,20 @@ local addonName, addon = ...
 addon.MetricsPlot = {}
 local MetricsPlot = addon.MetricsPlot
 
+-- Font configuration
+local FONT_PATH = "Interface\\AddOns\\Stormy\\assets\\SCP-SB.ttf"
+local FONT_SIZE_LABELS = 12
+
 -- Plot configuration
 local PLOT_CONFIG = {
     -- Window dimensions
-    width = 400,
-    height = 250,
+    width = 380,  -- Same width as meters
+    height = 90,   -- 50% shorter than before
     
     -- Colors
-    backgroundColor = {0.1, 0.1, 0.1, 0.9},
+    backgroundColor = {0, 0, 0, 0.5},
     gridColor = {0.3, 0.3, 0.3, 0.5},
-    dpsColor = {1, 0.2, 0.2, 1},    -- Red for DPS
+    dpsColor = {1, 0, 0, 1},    -- Pure red for DPS
     hpsColor = {0.2, 1, 0.2, 1},    -- Green for HPS
     
     -- Performance settings
@@ -30,8 +34,8 @@ local PLOT_CONFIG = {
     
     -- Plot settings
     timeWindow = 60,        -- Show last 60 seconds
-    gridLines = 5,          -- Number of horizontal grid lines
-    timeMarks = 6,          -- Number of time axis marks
+    gridLines = 3,          -- Number of horizontal grid lines (4 labels including 0)
+    timeMarks = 2,          -- Number of time axis marks (3 labels: 0s, -30s, -60s)
     
     -- Auto-scaling
     autoScale = true,
@@ -43,10 +47,11 @@ local PLOT_CONFIG = {
 -- METRICS PLOT CLASS
 -- =============================================================================
 
-function MetricsPlot:New()
+function MetricsPlot:New(plotType)
     local instance = {
         -- Configuration
         config = PLOT_CONFIG,
+        plotType = plotType or "DPS",  -- "DPS" or "HPS"
         
         -- State
         isVisible = false,
@@ -55,7 +60,12 @@ function MetricsPlot:New()
         -- Data
         dpsPoints = {},
         hpsPoints = {},
-        maxValue = PLOT_CONFIG.minScale,
+        maxDPS = PLOT_CONFIG.minScale,
+        maxHPS = PLOT_CONFIG.minScale,
+        
+        -- Scale stability
+        lastScaleUpdate = 0,
+        scaleUpdateInterval = 1.0,  -- Only update scale once per second
         
         -- UI components
         frame = nil,
@@ -101,7 +111,7 @@ function MetricsPlot:SampleAccumulatorData(rollingData, startTime, endTime, wind
         
         -- Sum values in window using the same logic as the accumulator
         for timestamp, value in pairs(rollingData) do
-            if type(timestamp) == "number" and timestamp >= cutoffTime then
+            if type(timestamp) == "number" and timestamp >= cutoffTime and timestamp <= currentTime then
                 sum = sum + value
                 pointCount = pointCount + 1
             end
@@ -136,43 +146,28 @@ function MetricsPlot:UpdateData()
     local now = addon.TimingManager:GetCurrentRelativeTime()
     local startTime = now - self.config.timeWindow
     
-    -- Sample DPS data
-    if addon.DamageAccumulator and addon.DamageAccumulator.rollingData then
-        self.dpsPoints = self:SampleAccumulatorData(
-            addon.DamageAccumulator.rollingData.values,
-            startTime, now, 5  -- 5-second rolling window for DPS
-        )
-        
-        -- Debug: Check if we have DPS data (disabled to reduce spam)
-        -- if #self.dpsPoints > 0 then
-        --     local maxDPS = 0
-        --     for _, point in ipairs(self.dpsPoints) do
-        --         maxDPS = math.max(maxDPS, point.value)
-        --     end
-        --     print(string.format("DPS Points: %d, Max: %.0f", #self.dpsPoints, maxDPS))
-        -- end
+    -- Sample data based on plot type
+    if self.plotType == "DPS" then
+        if addon.DamageAccumulator and addon.DamageAccumulator.rollingData then
+            self.dpsPoints = addon.DamageAccumulator:GetTimeSeriesData(startTime, now, 1)
+        else
+            self.dpsPoints = {}
+            print("DamageAccumulator not available or no rolling data")
+        end
+        self.hpsPoints = {}  -- Empty for DPS plot
     else
-        self.dpsPoints = {}
+        -- HPS plot
+        if addon.HealingAccumulator and addon.HealingAccumulator.rollingData then
+            self.hpsPoints = addon.HealingAccumulator:GetTimeSeriesData(startTime, now, 1)
+        else
+            self.hpsPoints = {}
+            print("HealingAccumulator not available or no rolling data")
+        end
+        self.dpsPoints = {}  -- Empty for HPS plot
     end
     
-    -- Sample HPS data
-    if addon.HealingAccumulator and addon.HealingAccumulator.rollingData then
-        self.hpsPoints = self:SampleAccumulatorData(
-            addon.HealingAccumulator.rollingData.values,
-            startTime, now, 5  -- 5-second rolling window for HPS
-        )
-        
-        -- Debug: Check if we have HPS data (disabled to reduce spam)
-        -- if #self.hpsPoints > 0 then
-        --     local maxHPS = 0
-        --     for _, point in ipairs(self.hpsPoints) do
-        --         maxHPS = math.max(maxHPS, point.value)
-        --     end
-        --     print(string.format("HPS Points: %d, Max: %.0f", #self.hpsPoints, maxHPS))
-        -- end
-    else
-        self.hpsPoints = {}
-    end
+    -- Ensure both lines have baseline data for visibility
+    self:EnsureBaselineData(startTime, now)
     
     -- Update auto-scaling
     if self.config.autoScale then
@@ -180,22 +175,91 @@ function MetricsPlot:UpdateData()
     end
 end
 
--- Update Y-axis scaling based on current data - shared scale for both DPS and HPS
-function MetricsPlot:UpdateScale()
-    local maxValue = self.config.minScale
-    
-    -- Find maximum value in both DPS and HPS data
-    for _, point in ipairs(self.dpsPoints) do
-        maxValue = math.max(maxValue, point.value)
+-- Ensure both DPS and HPS have baseline data points for visibility
+function MetricsPlot:EnsureBaselineData(startTime, endTime)
+    -- If DPS has no data, create baseline zero points
+    if #self.dpsPoints == 0 then
+        self.dpsPoints = {}
+        local currentTime = startTime
+        while currentTime <= endTime do
+            table.insert(self.dpsPoints, {
+                time = currentTime,
+                value = 0
+            })
+            currentTime = currentTime + self.config.sampleRate
+        end
     end
     
+    -- If HPS has no data, create baseline zero points
+    if #self.hpsPoints == 0 then
+        self.hpsPoints = {}
+        local currentTime = startTime
+        while currentTime <= endTime do
+            table.insert(self.hpsPoints, {
+                time = currentTime,
+                value = 0
+            })
+            currentTime = currentTime + self.config.sampleRate
+        end
+    end
+end
+
+-- Update Y-axis scaling with stability to prevent bouncing
+function MetricsPlot:UpdateScale()
+    local now = GetTime()
+    
+    -- Only update scale periodically to prevent bouncing
+    if now - self.lastScaleUpdate < self.scaleUpdateInterval then
+        return
+    end
+    
+    self.lastScaleUpdate = now
+    
+    -- Calculate current max values across a longer period for stability
+    local currentMaxDPS = self.config.minScale
+    local currentMaxHPS = self.config.minScale
+    
+    -- Find maximum DPS value in current data
+    for _, point in ipairs(self.dpsPoints) do
+        currentMaxDPS = math.max(currentMaxDPS, point.value)
+    end
+    
+    -- Find maximum HPS value in current data
     for _, point in ipairs(self.hpsPoints) do
-        maxValue = math.max(maxValue, point.value)
+        currentMaxHPS = math.max(currentMaxHPS, point.value)
     end
     
     -- Add margin and round up to nice numbers
-    maxValue = maxValue * (1 + self.config.scaleMargin)
-    self.maxValue = self:RoundToNiceScale(maxValue)
+    currentMaxDPS = currentMaxDPS * (1 + self.config.scaleMargin)
+    currentMaxHPS = currentMaxHPS * (1 + self.config.scaleMargin)
+    
+    local targetMaxDPS = self:RoundToNiceScale(currentMaxDPS)
+    local targetMaxHPS = self:RoundToNiceScale(currentMaxHPS)
+    
+    -- Initialize if not set
+    if not self.maxDPS then self.maxDPS = targetMaxDPS end
+    if not self.maxHPS then self.maxHPS = targetMaxHPS end
+    
+    -- Very stable scaling: only change when there's a big difference
+    if targetMaxDPS > self.maxDPS * 1.5 then
+        -- Scale up only if new peak is 50% higher
+        self.maxDPS = targetMaxDPS
+        -- Scaling up
+    elseif targetMaxDPS < self.maxDPS * 0.3 then
+        -- Scale down only if current max is less than 30% of current scale
+        self.maxDPS = targetMaxDPS
+        -- Scaling down
+    end
+    
+    if targetMaxHPS > self.maxHPS * 1.5 then
+        self.maxHPS = targetMaxHPS
+    elseif targetMaxHPS < self.maxHPS * 0.3 then
+        self.maxHPS = targetMaxHPS
+    end
+    
+    -- Ensure minimum scale
+    self.maxDPS = math.max(self.maxDPS, self.config.minScale)
+    self.maxHPS = math.max(self.maxHPS, self.config.minScale)
 end
 
 -- Round to nice scale values
@@ -213,22 +277,21 @@ end
 -- TEXTURE MANAGEMENT
 -- =============================================================================
 
--- Get texture from pool or create new one
+-- Create new texture each time (no pooling to avoid flicker)
 function MetricsPlot:GetTexture()
-    local texture = table.remove(self.texturePool)
-    if not texture then
-        texture = self.plotFrame:CreateTexture(nil, "ARTWORK")
-    end
+    local texture = self.plotFrame:CreateTexture(nil, "ARTWORK")
+    -- Set a solid color texture file
+    texture:SetTexture("Interface\\Buttons\\WHITE8X8")
     
     table.insert(self.usedTextures, texture)
     return texture
 end
 
--- Return all used textures to pool
+-- Destroy used textures instead of pooling to avoid flicker
 function MetricsPlot:ReturnTextures()
     for _, texture in ipairs(self.usedTextures) do
         texture:Hide()
-        table.insert(self.texturePool, texture)
+        -- Don't pool, just let it be garbage collected
     end
     self.usedTextures = {}
 end
@@ -237,34 +300,37 @@ end
 -- RENDERING
 -- =============================================================================
 
--- Convert data coordinates to screen coordinates with optional baseline offset
+-- Convert data coordinates to screen coordinates for overlapping plot with shared scale
 function MetricsPlot:DataToScreen(time, value, baselineOffset)
-    local plotWidth = self.config.width - 60  -- Back to simpler margins
-    local plotHeight = self.config.height - 40  -- Leave space for X-axis labels
+    local plotWidth = self.config.width - 60
+    local plotHeight = self.config.height - 10  -- Reduced margin (5px bottom + 5px top)
     
     -- Time to X coordinate (right to left scrolling)
     local now = addon.TimingManager:GetCurrentRelativeTime()
     local timeRange = self.config.timeWindow
     local normalizedTime = (time - (now - timeRange)) / timeRange
-    local x = 50 + (normalizedTime * plotWidth)  -- 50px left margin
+    local x = 50 + (normalizedTime * plotWidth)
     
     -- Value to Y coordinate using shared max value
-    local normalizedValue = self.maxValue > 0 and (value / self.maxValue) or 0
-    local y = 30 + (normalizedValue * plotHeight) + (baselineOffset or 0)  -- Add baseline offset
+    local maxValue = math.max(self.maxDPS or 0, self.maxHPS or 0, self.config.minScale)
+    local normalizedValue = maxValue > 0 and (value / maxValue) or 0
+    local y = 5 + (normalizedValue * (plotHeight - 5)) + (baselineOffset or 0)  -- Adjust for margins
     
     return x, y
 end
 
--- Draw grid lines and single shared Y-axis
+-- Draw grid lines and Y-axis with shared scale
 function MetricsPlot:DrawGrid()
     local plotWidth = self.config.width - 60
-    local plotHeight = self.config.height - 40
+    local plotHeight = self.config.height - 10  -- Reduced margin
+    
+    -- Calculate shared max value
+    local maxValue = math.max(self.maxDPS or 0, self.maxHPS or 0, self.config.minScale)
     
     -- Horizontal grid lines
     for i = 0, self.config.gridLines do
-        local y = 30 + (i / self.config.gridLines) * plotHeight
+        local y = 5 + (i / self.config.gridLines) * (plotHeight - 5)  -- Adjust for margins
         
-        -- Grid line
         local texture = self:GetTexture()
         texture:SetTexture(self.config.gridColor[1], self.config.gridColor[2], self.config.gridColor[3], self.config.gridColor[4])
         texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", 50, y)
@@ -277,14 +343,15 @@ function MetricsPlot:DrawGrid()
         self.yLabels = {}
     end
     
-    for i = 0, self.config.gridLines do
-        local y = 30 + (i / self.config.gridLines) * plotHeight
+    for i = 1, self.config.gridLines do  -- Start at 1 to skip 0 label
+        local y = 5 + (i / self.config.gridLines) * (plotHeight - 5)  -- Adjust for 5px top margin
         
         if not self.yLabels[i] then
-            self.yLabels[i] = self.plotFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            self.yLabels[i] = self.plotFrame:CreateFontString(nil, "OVERLAY")
+            self.yLabels[i]:SetFont(FONT_PATH, FONT_SIZE_LABELS, "OUTLINE")
         end
         
-        local labelValue = (i / self.config.gridLines) * self.maxValue
+        local labelValue = (i / self.config.gridLines) * maxValue
         local labelText = self:FormatNumber(labelValue)
         self.yLabels[i]:SetText(labelText)
         self.yLabels[i]:SetPoint("RIGHT", self.plotFrame, "BOTTOMLEFT", 45, y)
@@ -294,28 +361,17 @@ function MetricsPlot:DrawGrid()
     -- Vertical grid lines (time marks)
     for i = 0, self.config.timeMarks do
         local x = 50 + (i / self.config.timeMarks) * plotWidth
+        
         local texture = self:GetTexture()
         texture:SetTexture(self.config.gridColor[1], self.config.gridColor[2], self.config.gridColor[3], self.config.gridColor[4])
-        texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x, 30)
+        texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x, 5)
         texture:SetSize(1, plotHeight)
         texture:Show()
         
-        -- Time axis label
-        if not self.timeLabels then
-            self.timeLabels = {}
-        end
-        
-        if not self.timeLabels[i] then
-            self.timeLabels[i] = self.plotFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        end
-        
-        local timeOffset = -(self.config.timeWindow * (self.config.timeMarks - i) / self.config.timeMarks)
-        local labelText = string.format("%ds", timeOffset)
-        self.timeLabels[i]:SetText(labelText)
-        self.timeLabels[i]:SetPoint("TOP", self.plotFrame, "BOTTOMLEFT", x, 25)
-        self.timeLabels[i]:SetTextColor(0.8, 0.8, 0.8, 1)
+        -- Time axis labels removed for cleaner look
     end
 end
+
 
 -- Format numbers for display
 function MetricsPlot:FormatNumber(num)
@@ -328,38 +384,41 @@ function MetricsPlot:FormatNumber(num)
     end
 end
 
--- Draw plot line from data points with baseline offset for Z-layering
-function MetricsPlot:DrawLine(points, color, baselineOffset)
-    if #points < 2 then
+-- Draw bars for each data point instead of continuous lines
+function MetricsPlot:DrawBars(points, color, baselineOffset)
+    if #points == 0 then
         return
     end
     
-    for i = 1, #points - 1 do
-        local point1 = points[i]
-        local point2 = points[i + 1]
-        
-        local x1, y1 = self:DataToScreen(point1.time, point1.value, baselineOffset)
-        local x2, y2 = self:DataToScreen(point2.time, point2.value, baselineOffset)
-        
-        -- Draw simple horizontal/vertical line segments
-        
-        -- Draw horizontal segment
-        if x2 > x1 then
+    local plotWidth = self.config.width - 60
+    local plotHeight = self.config.height - 10  -- Reduced margin
+    local barWidth = plotWidth / self.config.timeWindow  -- Width per second
+    
+    for i, point in ipairs(points) do
+        if point.value > 0 then  -- Only draw bars for non-zero values
+            local x, yTop = self:DataToScreen(point.time, point.value, baselineOffset)
+            local _, yBottom = self:DataToScreen(point.time, 0, baselineOffset)
+            
+            -- Clip bars that exceed the plot area
+            local maxY = plotHeight - 5 + baselineOffset  -- Account for top margin
+            yTop = math.min(yTop, maxY)
+            
+            -- Special tracking bar: use distinct colors for 10-second boundaries
+            local barColor = color
+            if math.floor(point.time) % 10 == 0 then
+                -- Use specific tracking colors based on plot type
+                if self.plotType == "DPS" then
+                    barColor = {255/255, 192/255, 46/255, 1}  -- Orange for DPS
+                else
+                    barColor = {40/255, 190/255, 250/255, 1}  -- Light blue for HPS
+                end
+            end
+            
+            -- Draw vertical bar
             local texture = self:GetTexture()
-            texture:SetTexture(color[1], color[2], color[3], color[4])
-            texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x1, y1)
-            texture:SetSize(x2 - x1, 3)  -- Thicker line for visibility
-            texture:Show()
-        end
-        
-        -- Draw vertical segment if there's a height difference
-        if math.abs(y2 - y1) > 2 then
-            local minY = math.min(y1, y2)
-            local maxY = math.max(y1, y2)
-            local texture = self:GetTexture()
-            texture:SetTexture(color[1], color[2], color[3], color[4])
-            texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x2, minY)
-            texture:SetSize(3, maxY - minY)  -- Thicker line for visibility
+            texture:SetVertexColor(barColor[1], barColor[2], barColor[3], barColor[4])
+            texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x - barWidth/2, yBottom)
+            texture:SetSize(math.max(1, barWidth * 0.8), yTop - yBottom)  -- 80% width with gaps
             texture:Show()
         end
     end
@@ -368,8 +427,11 @@ end
 -- Main render function
 function MetricsPlot:Render()
     if not self.isVisible or self.isPaused then
+        print("Plot not rendering - visible:", self.isVisible, "paused:", self.isPaused)
         return
     end
+    
+    -- Remove debug spam
     
     -- Clear previous textures
     self:ReturnTextures()
@@ -377,32 +439,15 @@ function MetricsPlot:Render()
     -- Draw grid
     self:DrawGrid()
     
-    -- Draw HPS line (green) with baseline offset of 0 (bottom layer)
-    if #self.hpsPoints > 1 then
-        self:DrawLine(self.hpsPoints, self.config.hpsColor, 0)
-    elseif #self.hpsPoints == 1 then
-        -- Draw single point as a dot
-        local point = self.hpsPoints[1]
-        local x, y = self:DataToScreen(point.time, point.value, 0)
-        local texture = self:GetTexture()
-        texture:SetTexture(self.config.hpsColor[1], self.config.hpsColor[2], self.config.hpsColor[3], self.config.hpsColor[4])
-        texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x-1, y-1)
-        texture:SetSize(5, 5)
-        texture:Show()
-    end
+    -- Skip HPS for now - focusing on DPS first
     
-    -- Draw DPS line (red) with baseline offset of 5px (top layer)
-    if #self.dpsPoints > 1 then
-        self:DrawLine(self.dpsPoints, self.config.dpsColor, 5)
-    elseif #self.dpsPoints == 1 then
-        -- Draw single point as a dot
-        local point = self.dpsPoints[1]
-        local x, y = self:DataToScreen(point.time, point.value, 5)
-        local texture = self:GetTexture()
-        texture:SetTexture(self.config.dpsColor[1], self.config.dpsColor[2], self.config.dpsColor[3], self.config.dpsColor[4])
-        texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x-1, y-1)
-        texture:SetSize(5, 5)
-        texture:Show()
+    -- Draw bars based on plot type
+    if self.plotType == "DPS" and #self.dpsPoints > 0 then
+        local redColor = {1, 0, 0, 1}
+        self:DrawBars(self.dpsPoints, redColor, 5)
+    elseif self.plotType == "HPS" and #self.hpsPoints > 0 then
+        local greenColor = {0.2, 1, 0.2, 1}
+        self:DrawBars(self.hpsPoints, greenColor, 5)
     end
 end
 
@@ -410,7 +455,7 @@ end
 function MetricsPlot:Debug()
     print("=== MetricsPlot Debug ===")
     print(string.format("Visible: %s, Paused: %s", tostring(self.isVisible), tostring(self.isPaused)))
-    print(string.format("Max Value (shared): %.0f", self.maxValue))
+    print(string.format("Max DPS: %.0f, Max HPS: %.0f", self.maxDPS or 0, self.maxHPS or 0))
     print(string.format("DPS Points: %d, HPS Points: %d", #self.dpsPoints, #self.hpsPoints))
     
     if addon.TimingManager then
@@ -533,14 +578,21 @@ function MetricsPlot:CreateWindow()
     end
     
     -- Main frame
-    self.frame = CreateFrame("Frame", "StormyMetricsPlot", UIParent)
+    local frameName = "StormyMetricsPlot" .. (self.plotType or "DPS")
+    self.frame = CreateFrame("Frame", frameName, UIParent)
     self.frame:SetSize(self.config.width, self.config.height)
-    self.frame:SetPoint("CENTER", UIParent, "CENTER", 200, 0)  -- Offset from center
+    
+    -- Position based on plot type
+    if self.plotType == "HPS" then
+        self.frame:SetPoint("CENTER", UIParent, "CENTER", 200, -200)  -- Below DPS plot
+    else
+        self.frame:SetPoint("CENTER", UIParent, "CENTER", 200, 0)  -- Default position
+    end
     
     -- Background
     local bg = self.frame:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
-    bg:SetTexture(self.config.backgroundColor[1], self.config.backgroundColor[2], self.config.backgroundColor[3], self.config.backgroundColor[4])
+    bg:SetColorTexture(self.config.backgroundColor[1], self.config.backgroundColor[2], self.config.backgroundColor[3], self.config.backgroundColor[4])
     
     -- Plot area frame
     self.plotFrame = CreateFrame("Frame", nil, self.frame)
@@ -553,10 +605,7 @@ function MetricsPlot:CreateWindow()
     self.frame:SetScript("OnDragStart", function() self.frame:StartMoving() end)
     self.frame:SetScript("OnDragStop", function() self.frame:StopMovingOrSizing() end)
     
-    -- Title
-    local title = self.frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    title:SetPoint("TOP", self.frame, "TOP", 0, -5)
-    title:SetText("DPS/HPS Plot")
+    -- Title removed for cleaner look
     
     self.frame:Hide()
 end
@@ -564,12 +613,15 @@ end
 -- Show the plot window
 function MetricsPlot:Show()
     if not self.frame then
+        print("Creating plot window")
         self:CreateWindow()
     end
     
+    print("Showing plot window")
     self.frame:Show()
     self.isVisible = true
     self:StartUpdates()
+    print("Plot window should now be visible, isVisible =", self.isVisible)
 end
 
 -- Hide the plot window

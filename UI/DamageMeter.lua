@@ -119,7 +119,7 @@ end
 -- Override base GetDisplayData method
 function DamageMeter:GetDisplayData()
     if addon.DamageAccumulator then
-        return addon.DamageAccumulator:GetDisplayData()
+        return addon.DamageAccumulator:GetDisplayData(self.state.windowSeconds)
     end
     
     -- Fallback empty data
@@ -140,6 +140,11 @@ function DamageMeter:GetDisplayData()
         totalSpellDamage = 0,
         totalMeleeDamage = 0
     }
+end
+
+-- Get current window setting for plot integration
+function DamageMeter:GetCurrentWindow()
+    return self.state.windowSeconds
 end
 
 -- Override base GetActivityLevel method
