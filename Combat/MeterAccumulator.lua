@@ -174,6 +174,20 @@ function MeterAccumulator:GetWindowTotals(windowSeconds)
     local now = addon.TimingManager:GetCurrentRelativeTime()
     local cutoffTime = now - windowSeconds
     
+    -- Activity-based data expiration: if no events for longer than the window, return zeros
+    local timeSinceLastEvent = self.state.lastEventTime > 0 and (GetTime() - self.state.lastEventTime) or 0
+    if timeSinceLastEvent > windowSeconds then
+        return {
+            value = 0,
+            events = 0,
+            criticals = 0,
+            duration = windowSeconds,
+            metric = 0,
+            metricPS = 0,
+            critPercent = 0
+        }
+    end
+    
     local totalValue = 0
     local eventCount = 0
     local critCount = 0
@@ -247,6 +261,16 @@ end
 -- Calculate and cache current metric
 function MeterAccumulator:UpdateCurrentValues()
     local now = GetTime()
+    
+    -- Event gap detection: if gap is larger than current window, reset current metric
+    local timeSinceLastEvent = self.state.lastEventTime > 0 and (now - self.state.lastEventTime) or 0
+    if timeSinceLastEvent > WINDOWS.CURRENT then
+        self.state.currentMetric = 0
+        self.state.lastCalculation = now
+        -- Still update peaks to allow decay
+        self:UpdatePeaks(now)
+        return
+    end
     
     -- Update peak values with decay
     self:UpdatePeaks(now)
