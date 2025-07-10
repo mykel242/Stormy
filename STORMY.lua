@@ -157,6 +157,17 @@ function addon:OnInitialize()
         -- HealingMeter module not found
     end
     
+    -- Initialize MetricsPlot (create instance)
+    if self.MetricsPlot then
+        -- MetricsPlot initialization
+        local success, result = pcall(function()
+            self.MetricsPlot = self.MetricsPlot:New()
+            self.MetricsPlot:Initialize()
+        end)
+    else
+        -- MetricsPlot module not found
+    end
+    
     
     -- Initialize DamageMeter (create instance)
     if self.DamageMeter then
@@ -193,6 +204,13 @@ function addon:OnInitialize()
         -- Healing meter registered
     else
         -- Failed to register Healing meter
+    end
+    
+    if self.MeterManager and self.MetricsPlot then
+        self.MeterManager:RegisterMeter("Plot", nil, self.MetricsPlot)
+        -- Metrics plot registered
+    else
+        -- Failed to register Metrics plot
     end
     
     -- print("[STORMY] Initialization complete!")
@@ -319,6 +337,12 @@ SlashCmdList["STORMY"] = function(msg)
         else
             print("[STORMY] HPS meter not available")
         end
+    elseif command == "plot" then
+        if addon.MeterManager then
+            addon.MeterManager:ToggleMeter("Plot")
+        else
+            print("[STORMY] Metrics plot not available")
+        end
     elseif command:match("^cb%s") then
         -- Circuit breaker commands: /stormy cb auto|solo|raid|mythic|<number>
         local mode = command:match("^cb%s+(.+)")
@@ -335,6 +359,7 @@ SlashCmdList["STORMY"] = function(msg)
         print("  /stormy show - Toggle damage meter")
         print("  /stormy dps - Toggle DPS meter")
         print("  /stormy hps - Toggle HPS meter")
+        print("  /stormy plot - Toggle metrics plot")
         print("  /stormy debug - Show debug information")
         print("  /stormy reset - Reset statistics")
         print("  /stormy dpsdebug - Debug DPS calculations")

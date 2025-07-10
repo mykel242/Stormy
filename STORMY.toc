@@ -35,6 +35,7 @@ Tracking/RingBuffer.lua
 # UI Components
 UI/DamageMeter.lua
 UI/HealingMeter.lua
+UI/MetricsPlot.lua
 
 # Main Initialization
 STORMY.lua
