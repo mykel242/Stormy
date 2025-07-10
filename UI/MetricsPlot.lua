@@ -368,6 +368,14 @@ function MetricsPlot:Render()
     -- Draw DPS line
     if #self.dpsPoints > 1 then
         self:DrawLine(self.dpsPoints, self.config.dpsColor)
+        -- Debug: Add a marker to show DPS line is being drawn
+        local lastPoint = self.dpsPoints[#self.dpsPoints]
+        local x, y = self:DataToScreen(lastPoint.time, lastPoint.value)
+        local marker = self:GetTexture()
+        marker:SetTexture(1, 1, 1, 1)  -- White marker
+        marker:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x-2, y-2)
+        marker:SetSize(5, 5)
+        marker:Show()
     elseif #self.dpsPoints == 1 then
         -- Draw single point as a dot
         local point = self.dpsPoints[1]
@@ -406,20 +414,68 @@ function MetricsPlot:Debug()
         print(string.format("Current Time: %.1f", now))
     end
     
-    if addon.DamageAccumulator and addon.DamageAccumulator.rollingData then
-        local count = 0
-        for _ in pairs(addon.DamageAccumulator.rollingData.values) do
-            count = count + 1
+    -- Check DPS data in detail
+    if addon.DamageAccumulator then
+        print("DamageAccumulator found:")
+        if addon.DamageAccumulator.rollingData then
+            local count = 0
+            local totalDamage = 0
+            for timestamp, value in pairs(addon.DamageAccumulator.rollingData.values) do
+                count = count + 1
+                totalDamage = totalDamage + value
+            end
+            print(string.format("  DPS Rolling Data Points: %d, Total Damage: %.0f", count, totalDamage))
+            
+            -- Show current DPS calculation
+            local currentDPS = addon.DamageAccumulator:GetCurrentDPS()
+            print(string.format("  Current DPS: %.0f", currentDPS))
+        else
+            print("  No rollingData found")
         end
-        print(string.format("DPS Rolling Data Points: %d", count))
+    else
+        print("DamageAccumulator not found")
     end
     
-    if addon.HealingAccumulator and addon.HealingAccumulator.rollingData then
-        local count = 0
-        for _ in pairs(addon.HealingAccumulator.rollingData.values) do
-            count = count + 1
+    -- Check HPS data in detail  
+    if addon.HealingAccumulator then
+        print("HealingAccumulator found:")
+        if addon.HealingAccumulator.rollingData then
+            local count = 0
+            local totalHealing = 0
+            for timestamp, value in pairs(addon.HealingAccumulator.rollingData.values) do
+                count = count + 1
+                totalHealing = totalHealing + value
+            end
+            print(string.format("  HPS Rolling Data Points: %d, Total Healing: %.0f", count, totalHealing))
+            
+            -- Show current HPS calculation if available
+            if addon.HealingAccumulator.GetCurrentHPS then
+                local currentHPS = addon.HealingAccumulator:GetCurrentHPS()
+                print(string.format("  Current HPS: %.0f", currentHPS))
+            end
+        else
+            print("  No rollingData found")
         end
-        print(string.format("HPS Rolling Data Points: %d", count))
+    else
+        print("HealingAccumulator not found")
+    end
+    
+    -- Print sample of DPS points for debugging
+    if #self.dpsPoints > 0 then
+        print("Sample DPS Points:")
+        for i = 1, math.min(5, #self.dpsPoints) do
+            local point = self.dpsPoints[i]
+            print(string.format("  Time: %.1f, Value: %.0f", point.time, point.value))
+        end
+    end
+    
+    -- Print sample of HPS points for debugging
+    if #self.hpsPoints > 0 then
+        print("Sample HPS Points:")
+        for i = 1, math.min(5, #self.hpsPoints) do
+            local point = self.hpsPoints[i]
+            print(string.format("  Time: %.1f, Value: %.0f", point.time, point.value))
+        end
     end
 end
 
