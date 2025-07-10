@@ -134,6 +134,17 @@ function MetricsPlot:UpdateData()
             addon.DamageAccumulator.rollingData.values,
             startTime, now, 5  -- 5-second rolling window for DPS
         )
+        
+        -- Debug: Check if we have DPS data
+        if #self.dpsPoints > 0 then
+            local maxDPS = 0
+            for _, point in ipairs(self.dpsPoints) do
+                maxDPS = math.max(maxDPS, point.value)
+            end
+            -- print(string.format("DPS Points: %d, Max: %.0f", #self.dpsPoints, maxDPS))
+        end
+    else
+        self.dpsPoints = {}
     end
     
     -- Sample HPS data
@@ -142,6 +153,17 @@ function MetricsPlot:UpdateData()
             addon.HealingAccumulator.rollingData.values,
             startTime, now, 5  -- 5-second rolling window for HPS
         )
+        
+        -- Debug: Check if we have HPS data
+        if #self.hpsPoints > 0 then
+            local maxHPS = 0
+            for _, point in ipairs(self.hpsPoints) do
+                maxHPS = math.max(maxHPS, point.value)
+            end
+            -- print(string.format("HPS Points: %d, Max: %.0f", #self.hpsPoints, maxHPS))
+        end
+    else
+        self.hpsPoints = {}
     end
     
     -- Update auto-scaling
@@ -224,19 +246,36 @@ function MetricsPlot:DataToScreen(time, value)
     return x, y
 end
 
--- Draw grid lines
+-- Draw grid lines and labels
 function MetricsPlot:DrawGrid()
     local plotWidth = self.config.width - 60
     local plotHeight = self.config.height - 40
     
-    -- Horizontal grid lines
+    -- Horizontal grid lines with Y-axis labels
     for i = 0, self.config.gridLines do
         local y = 30 + (i / self.config.gridLines) * plotHeight
+        
+        -- Grid line
         local texture = self:GetTexture()
         texture:SetTexture(self.config.gridColor[1], self.config.gridColor[2], self.config.gridColor[3], self.config.gridColor[4])
-        texture:SetPoint("TOPLEFT", self.plotFrame, "BOTTOMLEFT", 50, y)
+        texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", 50, y)
         texture:SetSize(plotWidth, 1)
         texture:Show()
+        
+        -- Y-axis label
+        if not self.yLabels then
+            self.yLabels = {}
+        end
+        
+        if not self.yLabels[i] then
+            self.yLabels[i] = self.plotFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        end
+        
+        local labelValue = (i / self.config.gridLines) * self.maxValue
+        local labelText = self:FormatNumber(labelValue)
+        self.yLabels[i]:SetText(labelText)
+        self.yLabels[i]:SetPoint("RIGHT", self.plotFrame, "BOTTOMLEFT", 45, y)
+        self.yLabels[i]:SetTextColor(0.8, 0.8, 0.8, 1)
     end
     
     -- Vertical grid lines (time marks)
@@ -244,13 +283,39 @@ function MetricsPlot:DrawGrid()
         local x = 50 + (i / self.config.timeMarks) * plotWidth
         local texture = self:GetTexture()
         texture:SetTexture(self.config.gridColor[1], self.config.gridColor[2], self.config.gridColor[3], self.config.gridColor[4])
-        texture:SetPoint("TOPLEFT", self.plotFrame, "BOTTOMLEFT", x, 30)
+        texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x, 30)
         texture:SetSize(1, plotHeight)
         texture:Show()
+        
+        -- Time axis label
+        if not self.timeLabels then
+            self.timeLabels = {}
+        end
+        
+        if not self.timeLabels[i] then
+            self.timeLabels[i] = self.plotFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        end
+        
+        local timeOffset = -(self.config.timeWindow * (self.config.timeMarks - i) / self.config.timeMarks)
+        local labelText = string.format("%ds", timeOffset)
+        self.timeLabels[i]:SetText(labelText)
+        self.timeLabels[i]:SetPoint("TOP", self.plotFrame, "BOTTOMLEFT", x, 25)
+        self.timeLabels[i]:SetTextColor(0.8, 0.8, 0.8, 1)
     end
 end
 
--- Draw plot line from data points
+-- Format numbers for display
+function MetricsPlot:FormatNumber(num)
+    if num >= 1000000 then
+        return string.format("%.1fM", num / 1000000)
+    elseif num >= 1000 then
+        return string.format("%.0fK", num / 1000)
+    else
+        return string.format("%.0f", num)
+    end
+end
+
+-- Draw plot line from data points using simple point-to-point lines
 function MetricsPlot:DrawLine(points, color)
     if #points < 2 then
         return
@@ -263,21 +328,26 @@ function MetricsPlot:DrawLine(points, color)
         local x1, y1 = self:DataToScreen(point1.time, point1.value)
         local x2, y2 = self:DataToScreen(point2.time, point2.value)
         
-        -- Calculate line segment
-        local dx = x2 - x1
-        local dy = y2 - y1
-        local length = math.sqrt(dx * dx + dy * dy)
-        local angle = math.atan2(dy, dx)
+        -- Draw simple horizontal/vertical line segments instead of angled lines
+        -- This is more reliable than texture rotation
         
-        if length > 0 then
+        -- Draw horizontal segment
+        if x2 > x1 then
             local texture = self:GetTexture()
             texture:SetTexture(color[1], color[2], color[3], color[4])
-            texture:SetPoint("TOPLEFT", self.plotFrame, "BOTTOMLEFT", x1, y1)
-            texture:SetSize(length, 2)  -- 2px line width
-            
-            -- Rotate texture for angled lines (if supported)
-            -- Note: Texture rotation requires additional implementation
-            
+            texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x1, y1)
+            texture:SetSize(x2 - x1, 2)  -- Horizontal line
+            texture:Show()
+        end
+        
+        -- Draw vertical segment if there's a height difference
+        if math.abs(y2 - y1) > 2 then
+            local minY = math.min(y1, y2)
+            local maxY = math.max(y1, y2)
+            local texture = self:GetTexture()
+            texture:SetTexture(color[1], color[2], color[3], color[4])
+            texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x2, minY)
+            texture:SetSize(2, maxY - minY)  -- Vertical line
             texture:Show()
         end
     end
@@ -298,11 +368,58 @@ function MetricsPlot:Render()
     -- Draw DPS line
     if #self.dpsPoints > 1 then
         self:DrawLine(self.dpsPoints, self.config.dpsColor)
+    elseif #self.dpsPoints == 1 then
+        -- Draw single point as a dot
+        local point = self.dpsPoints[1]
+        local x, y = self:DataToScreen(point.time, point.value)
+        local texture = self:GetTexture()
+        texture:SetTexture(self.config.dpsColor[1], self.config.dpsColor[2], self.config.dpsColor[3], self.config.dpsColor[4])
+        texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x-1, y-1)
+        texture:SetSize(3, 3)
+        texture:Show()
     end
     
     -- Draw HPS line
     if #self.hpsPoints > 1 then
         self:DrawLine(self.hpsPoints, self.config.hpsColor)
+    elseif #self.hpsPoints == 1 then
+        -- Draw single point as a dot
+        local point = self.hpsPoints[1]
+        local x, y = self:DataToScreen(point.time, point.value)
+        local texture = self:GetTexture()
+        texture:SetTexture(self.config.hpsColor[1], self.config.hpsColor[2], self.config.hpsColor[3], self.config.hpsColor[4])
+        texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x-1, y-1)
+        texture:SetSize(3, 3)
+        texture:Show()
+    end
+end
+
+-- Debug method to print current state
+function MetricsPlot:Debug()
+    print("=== MetricsPlot Debug ===")
+    print(string.format("Visible: %s, Paused: %s", tostring(self.isVisible), tostring(self.isPaused)))
+    print(string.format("Max Value: %.0f", self.maxValue))
+    print(string.format("DPS Points: %d, HPS Points: %d", #self.dpsPoints, #self.hpsPoints))
+    
+    if addon.TimingManager then
+        local now = addon.TimingManager:GetCurrentRelativeTime()
+        print(string.format("Current Time: %.1f", now))
+    end
+    
+    if addon.DamageAccumulator and addon.DamageAccumulator.rollingData then
+        local count = 0
+        for _ in pairs(addon.DamageAccumulator.rollingData.values) do
+            count = count + 1
+        end
+        print(string.format("DPS Rolling Data Points: %d", count))
+    end
+    
+    if addon.HealingAccumulator and addon.HealingAccumulator.rollingData then
+        local count = 0
+        for _ in pairs(addon.HealingAccumulator.rollingData.values) do
+            count = count + 1
+        end
+        print(string.format("HPS Rolling Data Points: %d", count))
     end
 end
 

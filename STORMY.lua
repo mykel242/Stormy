@@ -343,6 +343,12 @@ SlashCmdList["STORMY"] = function(msg)
         else
             print("[STORMY] Metrics plot not available")
         end
+    elseif command == "plotdebug" then
+        if addon.MetricsPlot then
+            addon.MetricsPlot:Debug()
+        else
+            print("[STORMY] Metrics plot not available")
+        end
     elseif command:match("^cb%s") then
         -- Circuit breaker commands: /stormy cb auto|solo|raid|mythic|<number>
         local mode = command:match("^cb%s+(.+)")
@@ -360,6 +366,7 @@ SlashCmdList["STORMY"] = function(msg)
         print("  /stormy dps - Toggle DPS meter")
         print("  /stormy hps - Toggle HPS meter")
         print("  /stormy plot - Toggle metrics plot")
+        print("  /stormy plotdebug - Debug plot data")
         print("  /stormy debug - Show debug information")
         print("  /stormy reset - Reset statistics")
         print("  /stormy dpsdebug - Debug DPS calculations")
