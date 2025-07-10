@@ -351,13 +351,12 @@ function MetricsPlot:FormatNumber(num)
 end
 
 -- Draw plot line from data points using simple point-to-point lines
-function MetricsPlot:DrawLine(points, color, maxValue)
+function MetricsPlot:DrawLine(points, color, maxValue, layer)
     if #points < 2 then
         return
     end
     
-    print(string.format("DrawLine called with color %.1f,%.1f,%.1f for %d points", 
-          color[1], color[2], color[3], #points))
+    layer = layer or "ARTWORK"  -- Default layer
     
     for i = 1, #points - 1 do
         local point1 = points[i]
@@ -374,12 +373,8 @@ function MetricsPlot:DrawLine(points, color, maxValue)
             local texture = self:GetTexture()
             texture:SetTexture(color[1], color[2], color[3], color[4])
             texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x1, y1)
-            texture:SetSize(x2 - x1, 3)  -- Thicker line for visibility
+            texture:SetSize(x2 - x1, 4)  -- Thicker line for visibility
             texture:Show()
-            if i <= 3 then  -- Debug first few segments
-                print(string.format("  Horizontal segment %d: x1=%.1f, y1=%.1f, width=%.1f, color=%.1f,%.1f,%.1f", 
-                      i, x1, y1, x2-x1, color[1], color[2], color[3]))
-            end
         end
         
         -- Draw vertical segment if there's a height difference
@@ -389,12 +384,8 @@ function MetricsPlot:DrawLine(points, color, maxValue)
             local texture = self:GetTexture()
             texture:SetTexture(color[1], color[2], color[3], color[4])
             texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x2, minY)
-            texture:SetSize(3, maxY - minY)  -- Thicker line for visibility
+            texture:SetSize(4, maxY - minY)  -- Thicker line for visibility
             texture:Show()
-            if i <= 3 then  -- Debug first few segments
-                print(string.format("  Vertical segment %d: x2=%.1f, minY=%.1f, height=%.1f, color=%.1f,%.1f,%.1f", 
-                      i, x2, minY, maxY-minY, color[1], color[2], color[3]))
-            end
         end
     end
 end
@@ -411,19 +402,9 @@ function MetricsPlot:Render()
     -- Draw grid
     self:DrawGrid()
     
-    -- Draw DPS line (red, using DPS scale) - ALWAYS DRAW FIRST
+    -- Draw DPS line (red, using DPS scale) at higher layer
     if #self.dpsPoints > 1 then
-        print(string.format("Drawing DPS line with %d points, color: %.1f,%.1f,%.1f", 
-              #self.dpsPoints, self.config.dpsColor[1], self.config.dpsColor[2], self.config.dpsColor[3]))
-        self:DrawLine(self.dpsPoints, self.config.dpsColor, self.maxDPSValue)
-        -- Debug: Add a marker to show DPS line is being drawn
-        local lastPoint = self.dpsPoints[#self.dpsPoints]
-        local x, y = self:DataToScreen(lastPoint.time, lastPoint.value, self.maxDPSValue)
-        local marker = self:GetTexture()
-        marker:SetTexture(1, 1, 1, 1)  -- White marker
-        marker:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x-2, y-2)
-        marker:SetSize(5, 5)
-        marker:Show()
+        self:DrawLine(self.dpsPoints, self.config.dpsColor, self.maxDPSValue, "HIGH")
     elseif #self.dpsPoints == 1 then
         -- Draw single point as a dot
         local point = self.dpsPoints[1]
@@ -431,16 +412,13 @@ function MetricsPlot:Render()
         local texture = self:GetTexture()
         texture:SetTexture(self.config.dpsColor[1], self.config.dpsColor[2], self.config.dpsColor[3], self.config.dpsColor[4])
         texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x-1, y-1)
-        texture:SetSize(5, 5)  -- Larger dot for visibility
+        texture:SetSize(5, 5)
         texture:Show()
-        print("Drawing single DPS point as red dot")
     end
     
-    -- Draw HPS line (green, using HPS scale) - DRAW SECOND
+    -- Draw HPS line (green, using HPS scale) at lower layer
     if #self.hpsPoints > 1 then
-        print(string.format("Drawing HPS line with %d points, color: %.1f,%.1f,%.1f", 
-              #self.hpsPoints, self.config.hpsColor[1], self.config.hpsColor[2], self.config.hpsColor[3]))
-        self:DrawLine(self.hpsPoints, self.config.hpsColor, self.maxHPSValue)
+        self:DrawLine(self.hpsPoints, self.config.hpsColor, self.maxHPSValue, "ARTWORK")
     elseif #self.hpsPoints == 1 then
         -- Draw single point as a dot
         local point = self.hpsPoints[1]
@@ -448,9 +426,8 @@ function MetricsPlot:Render()
         local texture = self:GetTexture()
         texture:SetTexture(self.config.hpsColor[1], self.config.hpsColor[2], self.config.hpsColor[3], self.config.hpsColor[4])
         texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x-1, y-1)
-        texture:SetSize(5, 5)  -- Larger dot for visibility
+        texture:SetSize(5, 5)
         texture:Show()
-        print("Drawing single HPS point as green dot")
     end
 end
 
