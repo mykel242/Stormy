@@ -55,8 +55,7 @@ function MetricsPlot:New()
         -- Data
         dpsPoints = {},
         hpsPoints = {},
-        maxDPSValue = PLOT_CONFIG.minScale,
-        maxHPSValue = PLOT_CONFIG.minScale,
+        maxValue = PLOT_CONFIG.minScale,
         
         -- UI components
         frame = nil,
@@ -181,23 +180,22 @@ function MetricsPlot:UpdateData()
     end
 end
 
--- Update Y-axis scaling based on current data - separate scales for DPS and HPS
+-- Update Y-axis scaling based on current data - shared scale for both DPS and HPS
 function MetricsPlot:UpdateScale()
-    -- Calculate DPS scale
-    local maxDPS = self.config.minScale
-    for _, point in ipairs(self.dpsPoints) do
-        maxDPS = math.max(maxDPS, point.value)
-    end
-    maxDPS = maxDPS * (1 + self.config.scaleMargin)
-    self.maxDPSValue = self:RoundToNiceScale(maxDPS)
+    local maxValue = self.config.minScale
     
-    -- Calculate HPS scale
-    local maxHPS = self.config.minScale
-    for _, point in ipairs(self.hpsPoints) do
-        maxHPS = math.max(maxHPS, point.value)
+    -- Find maximum value in both DPS and HPS data
+    for _, point in ipairs(self.dpsPoints) do
+        maxValue = math.max(maxValue, point.value)
     end
-    maxHPS = maxHPS * (1 + self.config.scaleMargin)
-    self.maxHPSValue = self:RoundToNiceScale(maxHPS)
+    
+    for _, point in ipairs(self.hpsPoints) do
+        maxValue = math.max(maxValue, point.value)
+    end
+    
+    -- Add margin and round up to nice numbers
+    maxValue = maxValue * (1 + self.config.scaleMargin)
+    self.maxValue = self:RoundToNiceScale(maxValue)
 end
 
 -- Round to nice scale values
@@ -239,83 +237,63 @@ end
 -- RENDERING
 -- =============================================================================
 
--- Convert data coordinates to screen coordinates
-function MetricsPlot:DataToScreen(time, value, maxValue)
-    local plotWidth = self.config.width - 80  -- Leave space for Y-axis labels on both sides
+-- Convert data coordinates to screen coordinates with optional baseline offset
+function MetricsPlot:DataToScreen(time, value, baselineOffset)
+    local plotWidth = self.config.width - 60  -- Back to simpler margins
     local plotHeight = self.config.height - 40  -- Leave space for X-axis labels
     
     -- Time to X coordinate (right to left scrolling)
     local now = addon.TimingManager:GetCurrentRelativeTime()
     local timeRange = self.config.timeWindow
     local normalizedTime = (time - (now - timeRange)) / timeRange
-    local x = 60 + (normalizedTime * plotWidth)  -- 60px left margin for HPS labels
+    local x = 50 + (normalizedTime * plotWidth)  -- 50px left margin
     
-    -- Value to Y coordinate using the provided max value
-    -- FIX: Y coordinates should go UP as values increase (bottom to top)
-    local normalizedValue = maxValue > 0 and (value / maxValue) or 0
-    local y = (self.config.height - 30) - (normalizedValue * plotHeight)  -- Invert Y: higher values = higher Y
+    -- Value to Y coordinate using shared max value
+    local normalizedValue = self.maxValue > 0 and (value / self.maxValue) or 0
+    local y = 30 + (normalizedValue * plotHeight) + (baselineOffset or 0)  -- Add baseline offset
     
     return x, y
 end
 
--- Draw grid lines and dual-axis labels
+-- Draw grid lines and single shared Y-axis
 function MetricsPlot:DrawGrid()
-    local plotWidth = self.config.width - 80  -- Space for labels on both sides
+    local plotWidth = self.config.width - 60
     local plotHeight = self.config.height - 40
     
-    -- Horizontal grid lines (fixed for inverted Y coordinates)
+    -- Horizontal grid lines
     for i = 0, self.config.gridLines do
-        local y = (self.config.height - 30) - (i / self.config.gridLines) * plotHeight  -- Invert Y for grid
+        local y = 30 + (i / self.config.gridLines) * plotHeight
         
         -- Grid line
         local texture = self:GetTexture()
         texture:SetTexture(self.config.gridColor[1], self.config.gridColor[2], self.config.gridColor[3], self.config.gridColor[4])
-        texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", 60, y)  -- 60px left margin
+        texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", 50, y)
         texture:SetSize(plotWidth, 1)
         texture:Show()
     end
     
-    -- HPS Y-axis labels (left side, green)
-    if not self.hpsLabels then
-        self.hpsLabels = {}
+    -- Y-axis labels (shared scale)
+    if not self.yLabels then
+        self.yLabels = {}
     end
     
     for i = 0, self.config.gridLines do
-        local y = (self.config.height - 30) - (i / self.config.gridLines) * plotHeight  -- Invert Y for labels
+        local y = 30 + (i / self.config.gridLines) * plotHeight
         
-        if not self.hpsLabels[i] then
-            self.hpsLabels[i] = self.plotFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        if not self.yLabels[i] then
+            self.yLabels[i] = self.plotFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
         end
         
-        local labelValue = (i / self.config.gridLines) * self.maxHPSValue
+        local labelValue = (i / self.config.gridLines) * self.maxValue
         local labelText = self:FormatNumber(labelValue)
-        self.hpsLabels[i]:SetText(labelText)
-        self.hpsLabels[i]:SetPoint("RIGHT", self.plotFrame, "BOTTOMLEFT", 55, y)  -- Left side
-        self.hpsLabels[i]:SetTextColor(self.config.hpsColor[1], self.config.hpsColor[2], self.config.hpsColor[3], 1)  -- Green
-    end
-    
-    -- DPS Y-axis labels (right side, red)
-    if not self.dpsLabels then
-        self.dpsLabels = {}
-    end
-    
-    for i = 0, self.config.gridLines do
-        local y = (self.config.height - 30) - (i / self.config.gridLines) * plotHeight  -- Invert Y for labels
-        
-        if not self.dpsLabels[i] then
-            self.dpsLabels[i] = self.plotFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        end
-        
-        local labelValue = (i / self.config.gridLines) * self.maxDPSValue
-        local labelText = self:FormatNumber(labelValue)
-        self.dpsLabels[i]:SetText(labelText)
-        self.dpsLabels[i]:SetPoint("LEFT", self.plotFrame, "BOTTOMLEFT", 60 + plotWidth + 5, y)  -- Right side
-        self.dpsLabels[i]:SetTextColor(self.config.dpsColor[1], self.config.dpsColor[2], self.config.dpsColor[3], 1)  -- Red
+        self.yLabels[i]:SetText(labelText)
+        self.yLabels[i]:SetPoint("RIGHT", self.plotFrame, "BOTTOMLEFT", 45, y)
+        self.yLabels[i]:SetTextColor(0.8, 0.8, 0.8, 1)
     end
     
     -- Vertical grid lines (time marks)
     for i = 0, self.config.timeMarks do
-        local x = 60 + (i / self.config.timeMarks) * plotWidth
+        local x = 50 + (i / self.config.timeMarks) * plotWidth
         local texture = self:GetTexture()
         texture:SetTexture(self.config.gridColor[1], self.config.gridColor[2], self.config.gridColor[3], self.config.gridColor[4])
         texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x, 30)
@@ -350,30 +328,27 @@ function MetricsPlot:FormatNumber(num)
     end
 end
 
--- Draw plot line from data points using simple point-to-point lines
-function MetricsPlot:DrawLine(points, color, maxValue, layer)
+-- Draw plot line from data points with baseline offset for Z-layering
+function MetricsPlot:DrawLine(points, color, baselineOffset)
     if #points < 2 then
         return
     end
-    
-    layer = layer or "ARTWORK"  -- Default layer
     
     for i = 1, #points - 1 do
         local point1 = points[i]
         local point2 = points[i + 1]
         
-        local x1, y1 = self:DataToScreen(point1.time, point1.value, maxValue)
-        local x2, y2 = self:DataToScreen(point2.time, point2.value, maxValue)
+        local x1, y1 = self:DataToScreen(point1.time, point1.value, baselineOffset)
+        local x2, y2 = self:DataToScreen(point2.time, point2.value, baselineOffset)
         
-        -- Draw simple horizontal/vertical line segments instead of angled lines
-        -- This is more reliable than texture rotation
+        -- Draw simple horizontal/vertical line segments
         
         -- Draw horizontal segment
         if x2 > x1 then
             local texture = self:GetTexture()
             texture:SetTexture(color[1], color[2], color[3], color[4])
             texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x1, y1)
-            texture:SetSize(x2 - x1, 4)  -- Thicker line for visibility
+            texture:SetSize(x2 - x1, 3)  -- Thicker line for visibility
             texture:Show()
         end
         
@@ -384,7 +359,7 @@ function MetricsPlot:DrawLine(points, color, maxValue, layer)
             local texture = self:GetTexture()
             texture:SetTexture(color[1], color[2], color[3], color[4])
             texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x2, minY)
-            texture:SetSize(4, maxY - minY)  -- Thicker line for visibility
+            texture:SetSize(3, maxY - minY)  -- Thicker line for visibility
             texture:Show()
         end
     end
@@ -402,29 +377,29 @@ function MetricsPlot:Render()
     -- Draw grid
     self:DrawGrid()
     
-    -- Draw DPS line (red, using DPS scale) at higher layer
-    if #self.dpsPoints > 1 then
-        self:DrawLine(self.dpsPoints, self.config.dpsColor, self.maxDPSValue, "HIGH")
-    elseif #self.dpsPoints == 1 then
+    -- Draw HPS line (green) with baseline offset of 0 (bottom layer)
+    if #self.hpsPoints > 1 then
+        self:DrawLine(self.hpsPoints, self.config.hpsColor, 0)
+    elseif #self.hpsPoints == 1 then
         -- Draw single point as a dot
-        local point = self.dpsPoints[1]
-        local x, y = self:DataToScreen(point.time, point.value, self.maxDPSValue)
+        local point = self.hpsPoints[1]
+        local x, y = self:DataToScreen(point.time, point.value, 0)
         local texture = self:GetTexture()
-        texture:SetTexture(self.config.dpsColor[1], self.config.dpsColor[2], self.config.dpsColor[3], self.config.dpsColor[4])
+        texture:SetTexture(self.config.hpsColor[1], self.config.hpsColor[2], self.config.hpsColor[3], self.config.hpsColor[4])
         texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x-1, y-1)
         texture:SetSize(5, 5)
         texture:Show()
     end
     
-    -- Draw HPS line (green, using HPS scale) at lower layer
-    if #self.hpsPoints > 1 then
-        self:DrawLine(self.hpsPoints, self.config.hpsColor, self.maxHPSValue, "ARTWORK")
-    elseif #self.hpsPoints == 1 then
+    -- Draw DPS line (red) with baseline offset of 5px (top layer)
+    if #self.dpsPoints > 1 then
+        self:DrawLine(self.dpsPoints, self.config.dpsColor, 5)
+    elseif #self.dpsPoints == 1 then
         -- Draw single point as a dot
-        local point = self.hpsPoints[1]
-        local x, y = self:DataToScreen(point.time, point.value, self.maxHPSValue)
+        local point = self.dpsPoints[1]
+        local x, y = self:DataToScreen(point.time, point.value, 5)
         local texture = self:GetTexture()
-        texture:SetTexture(self.config.hpsColor[1], self.config.hpsColor[2], self.config.hpsColor[3], self.config.hpsColor[4])
+        texture:SetTexture(self.config.dpsColor[1], self.config.dpsColor[2], self.config.dpsColor[3], self.config.dpsColor[4])
         texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x-1, y-1)
         texture:SetSize(5, 5)
         texture:Show()
@@ -435,7 +410,7 @@ end
 function MetricsPlot:Debug()
     print("=== MetricsPlot Debug ===")
     print(string.format("Visible: %s, Paused: %s", tostring(self.isVisible), tostring(self.isPaused)))
-    print(string.format("Max DPS Value: %.0f, Max HPS Value: %.0f", self.maxDPSValue, self.maxHPSValue))
+    print(string.format("Max Value (shared): %.0f", self.maxValue))
     print(string.format("DPS Points: %d, HPS Points: %d", #self.dpsPoints, #self.hpsPoints))
     
     if addon.TimingManager then
