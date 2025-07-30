@@ -57,6 +57,14 @@ function MetricsPlot:New(plotType)
         isVisible = false,
         isPaused = false,
         
+        -- Plot interaction state
+        plotState = {
+            mode = "LIVE",             -- LIVE, PAUSED
+            pausedAt = nil,            -- timestamp when paused
+            selectedTimestamp = nil,   -- currently selected second
+            hoveredTimestamp = nil,    -- currently hovered second
+        },
+        
         -- Data
         dpsPoints = {},
         hpsPoints = {},
@@ -327,35 +335,33 @@ function MetricsPlot:DrawGrid()
     -- Calculate shared max value
     local maxValue = math.max(self.maxDPS or 0, self.maxHPS or 0, self.config.minScale)
     
-    -- Horizontal grid lines
+    -- Horizontal grid lines (subtle)
     for i = 0, self.config.gridLines do
         local y = 5 + (i / self.config.gridLines) * (plotHeight - 5)  -- Adjust for margins
         
         local texture = self:GetTexture()
-        texture:SetTexture(self.config.gridColor[1], self.config.gridColor[2], self.config.gridColor[3], self.config.gridColor[4])
+        texture:SetVertexColor(0.3, 0.3, 0.3, 0.3)  -- Subtle grid lines
         texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", 50, y)
         texture:SetSize(plotWidth, 1)
         texture:Show()
     end
     
-    -- Y-axis labels (shared scale)
-    if not self.yLabels then
-        self.yLabels = {}
+    -- Only show top scale label (maximum value)
+    if not self.maxLabel then
+        self.maxLabel = self.plotFrame:CreateFontString(nil, "OVERLAY")
+        self.maxLabel:SetFont(FONT_PATH, 14, "OUTLINE")
+        self.maxLabel:SetTextColor(0.9, 0.9, 0.9, 1)
     end
     
-    for i = 1, self.config.gridLines do  -- Start at 1 to skip 0 label
-        local y = 5 + (i / self.config.gridLines) * (plotHeight - 5)  -- Adjust for 5px top margin
-        
-        if not self.yLabels[i] then
-            self.yLabels[i] = self.plotFrame:CreateFontString(nil, "OVERLAY")
-            self.yLabels[i]:SetFont(FONT_PATH, FONT_SIZE_LABELS, "OUTLINE")
+    local labelText = self:FormatNumberHumanized(maxValue)
+    self.maxLabel:SetText(labelText)
+    self.maxLabel:SetPoint("RIGHT", self.plotFrame, "TOPLEFT", 45, -5)
+    
+    -- Hide old Y-axis labels if they exist
+    if self.yLabels then
+        for i, label in pairs(self.yLabels) do
+            label:Hide()
         end
-        
-        local labelValue = (i / self.config.gridLines) * maxValue
-        local labelText = self:FormatNumber(labelValue)
-        self.yLabels[i]:SetText(labelText)
-        self.yLabels[i]:SetPoint("RIGHT", self.plotFrame, "BOTTOMLEFT", 45, y)
-        self.yLabels[i]:SetTextColor(0.8, 0.8, 0.8, 1)
     end
     
     -- Vertical grid lines (time marks)
@@ -363,22 +369,35 @@ function MetricsPlot:DrawGrid()
         local x = 50 + (i / self.config.timeMarks) * plotWidth
         
         local texture = self:GetTexture()
-        texture:SetTexture(self.config.gridColor[1], self.config.gridColor[2], self.config.gridColor[3], self.config.gridColor[4])
+        texture:SetVertexColor(0.3, 0.3, 0.3, 0.3)  -- Subtle grid lines
         texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x, 5)
         texture:SetSize(1, plotHeight)
         texture:Show()
-        
-        -- Time axis labels removed for cleaner look
     end
 end
 
 
--- Format numbers for display
+-- Format numbers for display (legacy function)
 function MetricsPlot:FormatNumber(num)
     if num >= 1000000 then
         return string.format("%.1fM", num / 1000000)
     elseif num >= 1000 then
         return string.format("%.0fK", num / 1000)
+    else
+        return string.format("%.0f", num)
+    end
+end
+
+-- Humanized number formatting for scale display
+function MetricsPlot:FormatNumberHumanized(num)
+    if num >= 1000000000 then
+        return string.format("%.2fB", num / 1000000000)
+    elseif num >= 1000000 then
+        return string.format("%.1fM", num / 1000000)
+    elseif num >= 10000 then
+        return string.format("%.0fK", num / 1000)
+    elseif num >= 1000 then
+        return string.format("%.1fK", num / 1000)
     else
         return string.format("%.0f", num)
     end
@@ -598,12 +617,34 @@ function MetricsPlot:CreateWindow()
     self.plotFrame = CreateFrame("Frame", nil, self.frame)
     self.plotFrame:SetAllPoints()
     
-    -- Make draggable
+    -- Create tooltip
+    self:CreateTooltip()
+    
+    -- Make main frame draggable
     self.frame:SetMovable(true)
     self.frame:EnableMouse(true)
     self.frame:RegisterForDrag("LeftButton")
     self.frame:SetScript("OnDragStart", function() self.frame:StartMoving() end)
     self.frame:SetScript("OnDragStop", function() self.frame:StopMovingOrSizing() end)
+    
+    -- Add mouse interaction to plot frame
+    self.plotFrame:EnableMouse(true)
+    self.plotFrame:SetScript("OnMouseDown", function(frame, button)
+        if button == "LeftButton" then
+            self:HandlePlotClick(GetCursorPosition())
+        end
+    end)
+    self.plotFrame:SetScript("OnEnter", function(frame)
+        self:OnPlotEnter()
+    end)
+    self.plotFrame:SetScript("OnLeave", function(frame)
+        self:OnPlotLeave()
+    end)
+    self.plotFrame:SetScript("OnUpdate", function(frame)
+        if self:ShouldTrackMouse() then
+            self:OnPlotMouseMove()
+        end
+    end)
     
     -- Title removed for cleaner look
     
@@ -646,6 +687,187 @@ end
 -- Check if visible
 function MetricsPlot:IsVisible()
     return self.isVisible
+end
+
+-- =============================================================================
+-- MOUSE INTERACTION AND TOOLTIPS
+-- =============================================================================
+
+-- Create tooltip frame
+function MetricsPlot:CreateTooltip()
+    if not self.tooltip then
+        self.tooltip = CreateFrame("GameTooltip", "StormyPlotTooltip" .. self.plotType, self.frame, "GameTooltipTemplate")
+        self.tooltip:SetFrameStrata("TOOLTIP")
+    end
+end
+
+-- Convert screen coordinates to data time
+function MetricsPlot:ScreenToDataTime(screenX)
+    local plotWidth = self.config.width - 60
+    local relativeX = screenX - 50  -- Account for left margin
+    
+    -- Convert to time
+    local now = addon.TimingManager and addon.TimingManager:GetCurrentRelativeTime() or GetTime()
+    local timeRange = self.config.timeWindow
+    local normalizedX = relativeX / plotWidth
+    local time = (now - timeRange) + (normalizedX * timeRange)
+    
+    return time
+end
+
+-- Find the bar data for a given timestamp
+function MetricsPlot:FindBarAtTime(timestamp)
+    local flooredTime = math.floor(timestamp)
+    
+    -- Search in the appropriate points array
+    local points = self.plotType == "DPS" and self.dpsPoints or self.hpsPoints
+    
+    for _, point in ipairs(points) do
+        if math.floor(point.time) == flooredTime then
+            return point
+        end
+    end
+    
+    return nil
+end
+
+-- Handle plot click
+function MetricsPlot:HandlePlotClick(cursorX, cursorY)
+    -- Convert screen coordinates to frame-relative coordinates
+    local scale = UIParent:GetEffectiveScale()
+    local frameX = cursorX / scale
+    local frameY = cursorY / scale
+    
+    -- Convert to frame-relative coordinates
+    local left = self.plotFrame:GetLeft()
+    local bottom = self.plotFrame:GetBottom()
+    
+    if not left or not bottom then return end
+    
+    local relativeX = frameX - left
+    local relativeY = frameY - bottom
+    
+    -- Check if click is within plot area
+    local plotWidth = self.config.width - 60
+    local plotHeight = self.config.height - 10
+    
+    if relativeX < 50 or relativeX > (50 + plotWidth) or relativeY < 5 or relativeY > (plotHeight - 5) then
+        -- Click outside plot area - resume if paused
+        if self.plotState.mode == "PAUSED" then
+            self:Resume()
+        end
+        return
+    end
+    
+    -- Find clicked bar
+    local timestamp = self:ScreenToDataTime(relativeX)
+    local bar = self:FindBarAtTime(timestamp)
+    
+    if bar then
+        -- Auto-pause and select
+        self:Pause(math.floor(timestamp))
+        -- Show detailed breakdown (will be implemented later)
+        print(string.format("Clicked bar at %d seconds: %s", 
+              math.floor(timestamp), self:FormatNumberHumanized(bar.value)))
+    end
+end
+
+-- Check if we should track mouse movement
+function MetricsPlot:ShouldTrackMouse()
+    return self.plotFrame:IsMouseOver() and self.plotState.mode == "LIVE"
+end
+
+-- Handle mouse enter plot area
+function MetricsPlot:OnPlotEnter()
+    -- Start tracking mouse movement for tooltips
+end
+
+-- Handle mouse leave plot area  
+function MetricsPlot:OnPlotLeave()
+    -- Hide tooltip
+    if self.tooltip then
+        self.tooltip:Hide()
+    end
+    self.plotState.hoveredTimestamp = nil
+end
+
+-- Handle mouse movement over plot
+function MetricsPlot:OnPlotMouseMove()
+    local cursorX, cursorY = GetCursorPosition()
+    local scale = UIParent:GetEffectiveScale()
+    local frameX = cursorX / scale
+    
+    -- Convert to frame-relative coordinates
+    local left = self.plotFrame:GetLeft()
+    if not left then return end
+    
+    local relativeX = frameX - left
+    
+    -- Check if mouse is over plot area
+    local plotWidth = self.config.width - 60
+    if relativeX < 50 or relativeX > (50 + plotWidth) then
+        self:OnPlotLeave()
+        return
+    end
+    
+    -- Find hovered bar
+    local timestamp = self:ScreenToDataTime(relativeX)
+    local flooredTime = math.floor(timestamp)
+    
+    -- Only update if we moved to a different second
+    if flooredTime ~= self.plotState.hoveredTimestamp then
+        self.plotState.hoveredTimestamp = flooredTime
+        
+        local bar = self:FindBarAtTime(timestamp)
+        if bar then
+            self:ShowBarTooltip(bar)
+        else
+            self:OnPlotLeave()
+        end
+    end
+end
+
+-- Show tooltip for a bar
+function MetricsPlot:ShowBarTooltip(bar)
+    if not self.tooltip or not bar then return end
+    
+    self.tooltip:SetOwner(self.plotFrame, "ANCHOR_CURSOR")
+    self.tooltip:ClearLines()
+    
+    local now = addon.TimingManager and addon.TimingManager:GetCurrentRelativeTime() or GetTime()
+    local timeAgo = math.floor(now - bar.time)
+    
+    self.tooltip:AddLine(string.format("%d seconds ago", timeAgo))
+    self.tooltip:AddLine(string.format("%s: %s", self.plotType, 
+                        self:FormatNumberHumanized(bar.value)), 1, 1, 1)
+    
+    -- Add crit info if available
+    if bar.critRate and bar.critRate > 0 then
+        self.tooltip:AddLine(string.format("%.0f%% from crits", bar.critRate * 100), 
+                           0.8, 0.8, 0.8)
+    end
+    
+    self.tooltip:Show()
+end
+
+-- Pause the plot at a specific timestamp
+function MetricsPlot:Pause(timestamp)
+    self.plotState.mode = "PAUSED"
+    self.plotState.pausedAt = GetTime()
+    self.plotState.selectedTimestamp = timestamp
+    
+    -- Show pause overlay (will be implemented later)
+    print(string.format("Plot paused at timestamp %d", timestamp))
+end
+
+-- Resume live mode
+function MetricsPlot:Resume()
+    self.plotState.mode = "LIVE"
+    self.plotState.pausedAt = nil
+    self.plotState.selectedTimestamp = nil
+    
+    -- Hide pause overlay (will be implemented later)
+    print("Plot resumed to live mode")
 end
 
 -- =============================================================================
