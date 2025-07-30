@@ -78,6 +78,8 @@ function MetricsPlot:New(plotType)
         -- UI components
         frame = nil,
         plotFrame = nil,
+        detailFrame = nil,
+        detailContent = nil,
         
         -- Texture management
         texturePool = {},
@@ -620,6 +622,9 @@ function MetricsPlot:CreateWindow()
     -- Create tooltip
     self:CreateTooltip()
     
+    -- Create detail popup frame
+    self:CreateDetailFrame()
+    
     -- Make main frame draggable
     self.frame:SetMovable(true)
     self.frame:EnableMouse(true)
@@ -701,6 +706,70 @@ function MetricsPlot:CreateTooltip()
     end
 end
 
+-- Create detail popup frame
+function MetricsPlot:CreateDetailFrame()
+    if self.detailFrame then return end
+    
+    -- Main detail frame
+    self.detailFrame = CreateFrame("Frame", "StormyDetailFrame" .. self.plotType, UIParent)
+    self.detailFrame:SetSize(300, 200)
+    self.detailFrame:SetFrameStrata("DIALOG")
+    self.detailFrame:SetFrameLevel(100)
+    
+    -- Background
+    local bg = self.detailFrame:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0, 0, 0, 0.9)
+    
+    -- Border
+    local border = self.detailFrame:CreateTexture(nil, "BORDER")
+    border:SetAllPoints()
+    border:SetColorTexture(0.5, 0.5, 0.5, 1)
+    border:SetPoint("TOPLEFT", 1, -1)
+    border:SetPoint("BOTTOMRIGHT", -1, 1)
+    
+    -- Title
+    local title = self.detailFrame:CreateFontString(nil, "OVERLAY")
+    title:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
+    title:SetPoint("TOP", 0, -10)
+    title:SetTextColor(1, 1, 1, 1)
+    title:SetText("Event Details")
+    self.detailFrame.title = title
+    
+    -- Close button
+    local closeBtn = CreateFrame("Button", nil, self.detailFrame)
+    closeBtn:SetSize(20, 20)
+    closeBtn:SetPoint("TOPRIGHT", -5, -5)
+    closeBtn:SetNormalTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Up")
+    closeBtn:SetPushedTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Down")
+    closeBtn:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight")
+    closeBtn:SetScript("OnClick", function()
+        self:HideDetailFrame()
+    end)
+    
+    -- Scrollable content area
+    local scrollFrame = CreateFrame("ScrollFrame", nil, self.detailFrame, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", 10, -35)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -30, 10)
+    
+    local content = CreateFrame("Frame", nil, scrollFrame)
+    content:SetSize(260, 150)
+    scrollFrame:SetScrollChild(content)
+    
+    self.detailContent = content
+    self.detailScrollFrame = scrollFrame
+    
+    -- Make draggable
+    self.detailFrame:SetMovable(true)
+    self.detailFrame:EnableMouse(true)
+    self.detailFrame:RegisterForDrag("LeftButton")
+    self.detailFrame:SetScript("OnDragStart", function() self.detailFrame:StartMoving() end)
+    self.detailFrame:SetScript("OnDragStop", function() self.detailFrame:StopMovingOrSizing() end)
+    
+    -- Initially hidden
+    self.detailFrame:Hide()
+end
+
 -- Convert screen coordinates to data time
 function MetricsPlot:ScreenToDataTime(screenX)
     local plotWidth = self.config.width - 60
@@ -766,9 +835,8 @@ function MetricsPlot:HandlePlotClick(cursorX, cursorY)
     if bar then
         -- Auto-pause and select
         self:Pause(math.floor(timestamp))
-        -- Show detailed breakdown (will be implemented later)
-        print(string.format("Clicked bar at %d seconds: %s", 
-              math.floor(timestamp), self:FormatNumberHumanized(bar.value)))
+        -- Show detailed breakdown
+        self:ShowDetailFrame(math.floor(timestamp), frameX, frameY)
     end
 end
 
@@ -866,8 +934,210 @@ function MetricsPlot:Resume()
     self.plotState.pausedAt = nil
     self.plotState.selectedTimestamp = nil
     
-    -- Hide pause overlay (will be implemented later)
+    -- Hide detail frame and pause overlay
+    self:HideDetailFrame()
     print("Plot resumed to live mode")
+end
+
+-- Show detail popup frame
+function MetricsPlot:ShowDetailFrame(timestamp, x, y)
+    if not self.detailFrame then return end
+    
+    -- Position near clicked bar but ensure it's on screen
+    local left = math.max(50, math.min(x + 20, UIParent:GetWidth() - 320))
+    local bottom = math.max(50, math.min(y + 20, UIParent:GetHeight() - 220))
+    
+    self.detailFrame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left, bottom)
+    
+    -- Get detailed data for this timestamp
+    local summary, events = self:GetSecondDetails(timestamp)
+    
+    if summary then
+        self:PopulateDetailContent(timestamp, summary, events)
+        self.detailFrame:Show()
+    else
+        print("No detailed data available for this timestamp")
+    end
+end
+
+-- Hide detail popup frame
+function MetricsPlot:HideDetailFrame()
+    if self.detailFrame then
+        self.detailFrame:Hide()
+    end
+end
+
+-- Get detailed data for a timestamp from the accumulator
+function MetricsPlot:GetSecondDetails(timestamp)
+    local accumulator = nil
+    
+    -- Get the appropriate accumulator
+    if self.plotType == "DPS" and addon.DamageAccumulator then
+        accumulator = addon.DamageAccumulator
+    elseif self.plotType == "HPS" and addon.HealingAccumulator then
+        accumulator = addon.HealingAccumulator
+    end
+    
+    if accumulator and accumulator.GetSecondDetails then
+        return accumulator:GetSecondDetails(timestamp)
+    end
+    
+    return nil, nil
+end
+
+-- Populate the detail frame with breakdown information
+function MetricsPlot:PopulateDetailContent(timestamp, summary, events)
+    if not self.detailContent then return end
+    
+    -- Clear existing content
+    for i, child in ipairs({self.detailContent:GetChildren()}) do
+        child:Hide()
+    end
+    
+    local yOffset = -10
+    local lineHeight = 16
+    
+    -- Title with timestamp
+    local now = addon.TimingManager and addon.TimingManager:GetCurrentRelativeTime() or GetTime()
+    local timeAgo = math.floor(now - timestamp)
+    
+    local headerText = string.format("%d seconds ago", timeAgo)
+    local header = self:CreateDetailLine(headerText, 12, {1, 1, 0.5, 1})
+    header:SetPoint("TOPLEFT", self.detailContent, "TOPLEFT", 0, yOffset)
+    yOffset = yOffset - lineHeight
+    
+    -- Summary stats
+    local totalText = string.format("Total: %s (%d hits, %d crits)", 
+        self:FormatNumberHumanized(summary.totalDamage), 
+        summary.eventCount, 
+        summary.critCount)
+    local total = self:CreateDetailLine(totalText, 11, {1, 1, 1, 1})
+    total:SetPoint("TOPLEFT", self.detailContent, "TOPLEFT", 0, yOffset)
+    yOffset = yOffset - lineHeight
+    
+    -- Crit percentage
+    if summary.critCount > 0 then
+        local critPercent = (summary.critCount / summary.eventCount) * 100
+        local critDamagePercent = (summary.critDamage / summary.totalDamage) * 100
+        local critText = string.format("Crits: %.0f%% of hits, %.0f%% of damage", 
+            critPercent, critDamagePercent)
+        local crit = self:CreateDetailLine(critText, 10, {0.8, 0.8, 0.8, 1})
+        crit:SetPoint("TOPLEFT", self.detailContent, "TOPLEFT", 0, yOffset)
+        yOffset = yOffset - lineHeight
+    end
+    
+    -- Separator
+    yOffset = yOffset - 5
+    
+    -- Spell breakdown header
+    local spellHeader = self:CreateDetailLine("Spell Breakdown:", 11, {1, 1, 0.5, 1})
+    spellHeader:SetPoint("TOPLEFT", self.detailContent, "TOPLEFT", 0, yOffset)
+    yOffset = yOffset - lineHeight
+    
+    -- Sort spells by damage
+    local spells = {}
+    for spellId, data in pairs(summary.spells) do
+        table.insert(spells, {id = spellId, data = data})
+    end
+    table.sort(spells, function(a, b) return a.data.total > b.data.total end)
+    
+    -- Show top 8 spells
+    for i = 1, math.min(8, #spells) do
+        local spell = spells[i]
+        local name = addon.SpellCache:GetSpellName(spell.id)
+        local percent = (spell.data.total / summary.totalDamage) * 100
+        local critRate = spell.data.crits > 0 and (spell.data.crits / spell.data.count) * 100 or 0
+        
+        local spellText = string.format("%s: %s (%.0f%%) - %d hits", 
+            name, 
+            self:FormatNumberHumanized(spell.data.total),
+            percent,
+            spell.data.count)
+        
+        if critRate > 0 then
+            spellText = spellText .. string.format(", %.0f%% crit", critRate)
+        end
+        
+        local color = i <= 3 and {1, 1, 1, 1} or {0.8, 0.8, 0.8, 1}
+        local line = self:CreateDetailLine(spellText, 10, color)
+        line:SetPoint("TOPLEFT", self.detailContent, "TOPLEFT", 10, yOffset)
+        yOffset = yOffset - lineHeight
+    end
+    
+    -- Entity breakdown if events are available
+    if events and #events > 0 then
+        yOffset = yOffset - 5
+        
+        local entityHeader = self:CreateDetailLine("Entity Breakdown:", 11, {1, 1, 0.5, 1})
+        entityHeader:SetPoint("TOPLEFT", self.detailContent, "TOPLEFT", 0, yOffset)
+        yOffset = yOffset - lineHeight
+        
+        local entities = self:GroupEventsByEntity(events)
+        local entityList = {}
+        for name, data in pairs(entities) do
+            table.insert(entityList, {name = name, data = data})
+        end
+        table.sort(entityList, function(a, b) return a.data.total > b.data.total end)
+        
+        for i, entity in ipairs(entityList) do
+            local percent = (entity.data.total / summary.totalDamage) * 100
+            local entityText = string.format("%s: %s (%.0f%%)", 
+                entity.name, 
+                self:FormatNumberHumanized(entity.data.total),
+                percent)
+            
+            local color = {0.7, 0.9, 0.7, 1}  -- Light green for entities
+            local line = self:CreateDetailLine(entityText, 10, color)
+            line:SetPoint("TOPLEFT", self.detailContent, "TOPLEFT", 10, yOffset)
+            yOffset = yOffset - lineHeight
+        end
+    end
+    
+    -- Update content height for scrolling
+    self.detailContent:SetHeight(math.abs(yOffset) + 20)
+end
+
+-- Create a text line for the detail frame
+function MetricsPlot:CreateDetailLine(text, fontSize, color)
+    local line = self.detailContent:CreateFontString(nil, "OVERLAY")
+    line:SetFont("Fonts\\FRIZQT__.TTF", fontSize, "OUTLINE")
+    line:SetText(text)
+    line:SetTextColor(color[1], color[2], color[3], color[4])
+    line:SetJustifyH("LEFT")
+    line:SetWordWrap(true)
+    line:SetWidth(240)  -- Account for scrollbar
+    return line
+end
+
+-- Group events by entity (player vs pets)
+function MetricsPlot:GroupEventsByEntity(events)
+    local entities = {}
+    
+    for _, event in ipairs(events) do
+        local entityName = "Player"
+        if event.sourceType == 1 and event.sourceName ~= "" then
+            entityName = event.sourceName  -- Pet name
+        elseif event.sourceType == 2 and event.sourceName ~= "" then
+            entityName = event.sourceName .. " (Guardian)"
+        end
+        
+        if not entities[entityName] then
+            entities[entityName] = {
+                total = 0,
+                count = 0,
+                crits = 0
+            }
+        end
+        
+        local entity = entities[entityName]
+        entity.total = entity.total + event.amount
+        entity.count = entity.count + 1
+        if event.isCrit then
+            entity.crits = entity.crits + 1
+        end
+    end
+    
+    return entities
 end
 
 -- =============================================================================
