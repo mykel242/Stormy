@@ -259,6 +259,33 @@ Constants.SCALING = {
 }
 
 -- =============================================================================
+-- DETAIL BUFFER CONFIGURATION
+-- =============================================================================
+
+Constants.DETAIL_BUFFER = {
+    -- Configurable sizes for different content types
+    SIZES = {
+        SOLO = 3000,      -- 5 events/sec * 180s * 3.3 buffer
+        DUNGEON = 6000,   -- 10 events/sec * 180s * 3.3 buffer  
+        RAID = 12000,     -- 20 events/sec * 180s * 3.3 buffer
+        MYTHIC = 24000,   -- 40 events/sec * 180s * 3.3 buffer
+        CUSTOM = 9000     -- User configurable default
+    },
+    
+    -- Auto-detection thresholds (events per second)
+    AUTO_THRESHOLDS = {
+        SOLO = 5,         -- < 5 events/sec average
+        DUNGEON = 15,     -- < 15 events/sec average
+        RAID = 30,        -- < 30 events/sec average
+        -- Above 30 = MYTHIC
+    },
+    
+    -- Retention settings
+    RETENTION_TIME = 180,  -- Keep 180 seconds of detailed data
+    CLEANUP_INTERVAL = 30  -- Run cleanup every 30 seconds
+}
+
+-- =============================================================================
 -- UTILITY FUNCTIONS
 -- =============================================================================
 

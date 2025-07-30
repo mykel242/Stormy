@@ -89,6 +89,11 @@ function addon:OnInitialize()
         -- print("[STORMY] TablePool initialized")
     end
     
+    if self.SpellCache then
+        self.SpellCache:Initialize()
+        -- print("[STORMY] SpellCache initialized")
+    end
+    
     if self.TimingManager then
         self.TimingManager:Initialize()
         -- print("[STORMY] TimingManager initialized")

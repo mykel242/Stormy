@@ -15,6 +15,7 @@
 # Core Foundation
 Core/Constants.lua
 Core/TablePool.lua
+Core/SpellCache.lua
 Core/TimingManager.lua
 Core/EventBus.lua
 Core/MeterManager.lua
