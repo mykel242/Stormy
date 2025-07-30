@@ -259,7 +259,7 @@ function EventProcessor:ProcessEvent(...)
     -- STEP 7: Route to appropriate handler (still zero allocation)
     if eventCategory == "damage" then
         self:ProcessDamageEvent(timestamp, sourceGUID, destGUID, spellId, amount, 
-                               critical, isPlayer, isPet)
+                               critical, isPlayer, isPet, sourceName)
     elseif eventCategory == "healing" then
         -- For healing events, extract overhealing and absorbed amounts
         local overhealing = 0
@@ -282,13 +282,27 @@ end
 
 -- Process damage event (zero allocation)
 function EventProcessor:ProcessDamageEvent(timestamp, sourceGUID, destGUID, spellId, amount, 
-                                          critical, isPlayer, isPet)
+                                          critical, isPlayer, isPet, sourceName)
     -- Convert timestamp to relative time
     local relativeTime = addon.TimingManager:GetRelativeTime(timestamp)
     
+    -- Determine source type for detailed tracking
+    local sourceType = 0  -- Default to player
+    if isPet then
+        sourceType = 1  -- Pet
+    elseif sourceGUID and sourceGUID:match("^Creature") then
+        sourceType = 2  -- Guardian/other controllable entity
+    end
+    
+    -- Store entity name for SpellCache
+    if sourceName and sourceGUID and addon.SpellCache then
+        addon.SpellCache:StoreEntityName(sourceGUID, sourceName)
+    end
+    
     -- Route to MeterManager for proper damage accumulator dispatch
     if addon.MeterManager then
-        addon.MeterManager:RouteDamageEvent(relativeTime, sourceGUID, amount, isPlayer, isPet, critical)
+        addon.MeterManager:RouteDamageEvent(relativeTime, sourceGUID, amount, isPlayer, isPet, critical, 
+                                           spellId, sourceName, sourceType)
     end
     
     -- Dispatch event via event bus (creates minimal event object)
