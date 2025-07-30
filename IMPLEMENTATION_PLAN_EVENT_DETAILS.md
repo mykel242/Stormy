@@ -132,12 +132,24 @@ Constants.DETAIL_BUFFER = {
 
 ### 5. UI Components
 
-#### 5.1 Click Detection (MetricsPlot.lua)
+#### 5.1 Scale Label Simplification
+- Show only the maximum scale value (top label)
+- Use humanized number formatting (100k, 1.5M, 1.45B)
+- Remove intermediate grid labels for cleaner look
+- Keep grid lines for visual reference
+
+#### 5.2 Mouse Interaction
+- **Mouseover**: Show tooltip with exact value
+- **Click**: Pause and show detailed breakdown
+- **Click away**: Resume and hide details
+
+#### 5.3 Click Detection (MetricsPlot.lua)
 - Add mouse event handlers to plot frame
 - Convert screen coordinates to data coordinates
 - Identify clicked bar by timestamp
+- Track mouse position for tooltip display
 
-#### 5.2 Auto-Pause System
+#### 5.4 Auto-Pause System
 States:
 - LIVE - Normal scrolling updates
 - PAUSED - Frozen display, data collection continues
@@ -208,6 +220,80 @@ end
 - Spell breakdown uses variations of main color
 - Each spell gets slightly different brightness (0.8x to 1.2x)
 - Maintains visual connection to main plot color
+
+#### 6.5 Simplified Scale Display
+```lua
+function MetricsPlot:DrawGrid()
+    local plotWidth = self.config.width - 60
+    local plotHeight = self.config.height - 10
+    
+    -- Calculate shared max value
+    local maxValue = math.max(self.maxDPS or 0, self.maxHPS or 0, self.config.minScale)
+    
+    -- Draw horizontal grid lines (but no labels except top)
+    for i = 0, self.config.gridLines do
+        local y = 5 + (i / self.config.gridLines) * (plotHeight - 5)
+        
+        local texture = self:GetTexture()
+        texture:SetVertexColor(0.3, 0.3, 0.3, 0.3)  -- Subtle grid
+        texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", 50, y)
+        texture:SetSize(plotWidth, 1)
+        texture:Show()
+    end
+    
+    -- Only show top scale label
+    if not self.maxLabel then
+        self.maxLabel = self.plotFrame:CreateFontString(nil, "OVERLAY")
+        self.maxLabel:SetFont(FONT_PATH, 14, "OUTLINE")
+        self.maxLabel:SetTextColor(0.9, 0.9, 0.9, 1)
+    end
+    
+    local labelText = self:FormatNumberHumanized(maxValue)
+    self.maxLabel:SetText(labelText)
+    self.maxLabel:SetPoint("RIGHT", self.plotFrame, "TOPLEFT", 45, -5)
+end
+
+function MetricsPlot:FormatNumberHumanized(num)
+    if num >= 1000000000 then
+        return string.format("%.2fB", num / 1000000000)
+    elseif num >= 1000000 then
+        return string.format("%.1fM", num / 1000000)
+    elseif num >= 10000 then
+        return string.format("%.0fK", num / 1000)
+    elseif num >= 1000 then
+        return string.format("%.1fK", num / 1000)
+    else
+        return string.format("%.0f", num)
+    end
+end
+```
+
+#### 6.6 Tooltip Implementation
+```lua
+function MetricsPlot:CreateTooltip()
+    if not self.tooltip then
+        self.tooltip = CreateFrame("GameTooltip", "StormyPlotTooltip", self.frame, "GameTooltipTemplate")
+        self.tooltip:SetFrameStrata("TOOLTIP")
+    end
+end
+
+function MetricsPlot:ShowBarTooltip(bar, value)
+    self.tooltip:SetOwner(self.frame, "ANCHOR_CURSOR")
+    self.tooltip:ClearLines()
+    
+    local timeAgo = GetTime() - bar.timestamp
+    self.tooltip:AddLine(string.format("%d seconds ago", timeAgo))
+    self.tooltip:AddLine(string.format("%s: %s", self.plotType, 
+                        self:FormatNumberHumanized(value)), 1, 1, 1)
+    
+    if bar.critRate and bar.critRate > 0 then
+        self.tooltip:AddLine(string.format("%.0f%% from crits", bar.critRate * 100), 
+                           0.8, 0.8, 0.8)
+    end
+    
+    self.tooltip:Show()
+end
+```
 
 ### 7. Modified Event Flow
 
