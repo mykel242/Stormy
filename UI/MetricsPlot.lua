@@ -160,6 +160,8 @@ function MetricsPlot:UpdateData()
     if self.plotType == "DPS" then
         if addon.DamageAccumulator and addon.DamageAccumulator.rollingData then
             self.dpsPoints = addon.DamageAccumulator:GetTimeSeriesData(startTime, now, 1)
+            -- Enhance with critical hit data
+            self:EnhancePointsWithCritData(self.dpsPoints, addon.DamageAccumulator)
         else
             self.dpsPoints = {}
             print("DamageAccumulator not available or no rolling data")
@@ -169,6 +171,8 @@ function MetricsPlot:UpdateData()
         -- HPS plot
         if addon.HealingAccumulator and addon.HealingAccumulator.rollingData then
             self.hpsPoints = addon.HealingAccumulator:GetTimeSeriesData(startTime, now, 1)
+            -- Enhance with critical hit data
+            self:EnhancePointsWithCritData(self.hpsPoints, addon.HealingAccumulator)
         else
             self.hpsPoints = {}
             print("HealingAccumulator not available or no rolling data")
@@ -182,6 +186,31 @@ function MetricsPlot:UpdateData()
     -- Update auto-scaling
     if self.config.autoScale then
         self:UpdateScale()
+    end
+end
+
+-- Enhance data points with critical hit information
+function MetricsPlot:EnhancePointsWithCritData(points, accumulator)
+    if not accumulator or not accumulator.rollingData or not accumulator.rollingData.secondSummaries then
+        return
+    end
+    
+    for _, point in ipairs(points) do
+        local flooredTime = math.floor(point.time)
+        local summary = accumulator.rollingData.secondSummaries[flooredTime]
+        
+        if summary and summary.totalDamage > 0 then
+            -- Calculate critical hit rate (damage from crits / total damage)
+            point.critRate = summary.critDamage / summary.totalDamage
+            point.critDamage = summary.critDamage
+            point.totalHits = summary.eventCount
+            point.totalCrits = summary.critCount
+        else
+            point.critRate = 0
+            point.critDamage = 0
+            point.totalHits = 0
+            point.totalCrits = 0
+        end
     end
 end
 
@@ -414,6 +443,7 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
     local plotWidth = self.config.width - 60
     local plotHeight = self.config.height - 10  -- Reduced margin
     local barWidth = plotWidth / self.config.timeWindow  -- Width per second
+    local maxValue = math.max(self.maxDPS or 0, self.maxHPS or 0, self.config.minScale)
     
     for i, point in ipairs(points) do
         if point.value > 0 then  -- Only draw bars for non-zero values
@@ -424,8 +454,20 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
             local maxY = plotHeight - 5 + baselineOffset  -- Account for top margin
             yTop = math.min(yTop, maxY)
             
+            -- Check if this bar is selected for dimming
+            local isSelected = self.plotState.selectedTimestamp and 
+                             math.floor(point.time) == self.plotState.selectedTimestamp
+            
+            -- Base color with selection dimming
+            local barColor = {color[1], color[2], color[3], color[4]}
+            if not isSelected and self.plotState.selectedTimestamp then
+                -- Dim unselected bars when something is selected
+                barColor[1] = barColor[1] * 0.5
+                barColor[2] = barColor[2] * 0.5
+                barColor[3] = barColor[3] * 0.5
+            end
+            
             -- Special tracking bar: use distinct colors for 10-second boundaries
-            local barColor = color
             if math.floor(point.time) % 10 == 0 then
                 -- Use specific tracking colors based on plot type
                 if self.plotType == "DPS" then
@@ -433,9 +475,29 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
                 else
                     barColor = {40/255, 190/255, 250/255, 1}  -- Light blue for HPS
                 end
+                
+                -- Apply selection dimming to tracking colors too
+                if not isSelected and self.plotState.selectedTimestamp then
+                    barColor[1] = barColor[1] * 0.5
+                    barColor[2] = barColor[2] * 0.5
+                    barColor[3] = barColor[3] * 0.5
+                end
             end
             
-            -- Draw vertical bar
+            -- Check for glow effect (30% crit damage threshold)
+            local shouldGlow, glowIntensity = self:CalculateGlowEffect(point, maxValue)
+            
+            if shouldGlow then
+                -- Draw glow layer behind the bar
+                local glowTexture = self:GetTexture()
+                glowTexture:SetVertexColor(barColor[1] * 1.5, barColor[2] * 1.5, barColor[3] * 1.5, glowIntensity)
+                glowTexture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", 
+                                   x - barWidth * 0.6, yBottom - 2)
+                glowTexture:SetSize(barWidth * 1.2, (yTop - yBottom) + 4)
+                glowTexture:Show()
+            end
+            
+            -- Draw main vertical bar
             local texture = self:GetTexture()
             texture:SetVertexColor(barColor[1], barColor[2], barColor[3], barColor[4])
             texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x - barWidth/2, yBottom)
@@ -443,6 +505,25 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
             texture:Show()
         end
     end
+end
+
+-- Calculate glow effect based on crit rate and magnitude
+function MetricsPlot:CalculateGlowEffect(point, maxValue)
+    local CRIT_THRESHOLD = 0.3  -- 30% threshold
+    
+    -- Check if we have crit data and it exceeds threshold
+    if not point.critRate or point.critRate <= CRIT_THRESHOLD then
+        return false, 0
+    end
+    
+    -- Scale by how much above threshold and magnitude
+    local critFactor = (point.critRate - CRIT_THRESHOLD) / (1.0 - CRIT_THRESHOLD)  -- Normalize 30%-100% to 0-1
+    local magnitudeFactor = point.value / maxValue
+    
+    -- Maximum alpha of 0.4, scaled by both factors
+    local glowIntensity = critFactor * magnitudeFactor * 0.4
+    
+    return true, glowIntensity
 end
 
 -- Main render function
