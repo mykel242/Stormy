@@ -774,7 +774,7 @@ end
 
 -- Check if we should track mouse movement
 function MetricsPlot:ShouldTrackMouse()
-    return self.plotFrame:IsMouseOver() and self.plotState.mode == "LIVE"
+    return self.plotFrame:IsMouseOver()
 end
 
 -- Handle mouse enter plot area
