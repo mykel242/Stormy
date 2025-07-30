@@ -72,7 +72,8 @@ secondSummary = {
     totalDamage = 0,
     eventCount = 0,
     critCount = 0,
-    spells = {},  -- Reused table, cleared on release
+    critDamage = 0,    -- NEW: Track total damage from crits
+    spells = {},       -- Reused table, cleared on release
 }
 ```
 
@@ -157,17 +158,56 @@ Components:
 
 ### 6. Visual Feedback System
 
-#### 6.1 HSL Color Implementation
+#### 6.1 Simplified Color System
 ```lua
--- Hue: Event type (0=red for DPS, 120=green for HPS)
--- Saturation: Selection state (1.0=selected, 0.3=unselected)
--- Lightness: Magnitude (0.3-0.8 based on value/max)
+-- Base colors remain constant (red for DPS, green for HPS)
+-- Selection state: Full color for selected, 50% dimmed for unselected
+-- No brightness/lightness changes (bar height shows magnitude)
 ```
 
-#### 6.2 Special Effects
-- Glow effect for high crit rate bars (>50% crits)
-- Pulsing alpha for critical hits when selected
-- Smooth transitions when selection changes
+#### 6.2 Critical Hit Glow
+- Threshold: 30% of damage from crits (fixed)
+- Glow intensity: Scaled by (critRate * normalizedMagnitude)
+- Visual: Soft glow behind bar, 40% alpha max
+- Formula: `glowAlpha = (critRate - 0.3) * (value/maxValue) * 0.4`
+
+#### 6.3 Implementation Code
+```lua
+function MetricsPlot:GetBarColor(point, isSelected)
+    -- Use existing color constants
+    local r, g, b = unpack(self.config.dpsColor)  -- or hpsColor
+    
+    -- Dim unselected bars when something is selected
+    if not isSelected and self.plotState.selectedTimestamp then
+        r, g, b = r * 0.5, g * 0.5, b * 0.5
+    end
+    
+    return r, g, b, 1.0
+end
+
+function MetricsPlot:ShouldShowGlow(point)
+    local CRIT_THRESHOLD = 0.3  -- 30% threshold
+    local critRate = point.critDamage and (point.critDamage / point.value) or 0
+    return critRate > CRIT_THRESHOLD, critRate
+end
+
+function MetricsPlot:CalculateGlowIntensity(critRate, value, maxValue)
+    -- Only calculate for bars above threshold
+    if critRate <= 0.3 then return 0 end
+    
+    -- Scale by how much above threshold and magnitude
+    local critFactor = (critRate - 0.3) / 0.7  -- Normalize 30%-100% to 0-1
+    local magnitudeFactor = value / maxValue
+    
+    -- Maximum alpha of 0.4, scaled by both factors
+    return critFactor * magnitudeFactor * 0.4
+end
+```
+
+#### 6.4 Detail View Colors
+- Spell breakdown uses variations of main color
+- Each spell gets slightly different brightness (0.8x to 1.2x)
+- Maintains visual connection to main plot color
 
 ### 7. Modified Event Flow
 
