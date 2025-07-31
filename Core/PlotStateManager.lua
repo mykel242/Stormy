@@ -167,7 +167,7 @@ function PlotStateManager:ShowDetailWindow(plotType, timestamp, plotFrame)
     -- Get the appropriate plot instance
     local plot = sharedState.registeredPlots[plotType]
     if not plot then
-        print(string.format("[PlotStateManager] Plot type '%s' not registered", plotType))
+        -- Plot type not registered
         return
     end
     
@@ -178,7 +178,7 @@ function PlotStateManager:ShowDetailWindow(plotType, timestamp, plotFrame)
         -- Show the detail window with data
         detailWindow:Show(plotType, timestamp, summary, events, plotFrame)
     else
-        print(string.format("[PlotStateManager] No detail data found for timestamp %d", timestamp))
+        -- No detail data found for timestamp
     end
 end
 
