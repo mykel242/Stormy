@@ -928,11 +928,11 @@ end
 -- Show the plot window
 function MetricsPlot:Show()
     if not self.frame then
-        print("Creating plot window")
+        -- Create plot window on first show
         self:CreateWindow()
     end
     
-    print("Showing plot window")
+    -- Show the plot window
     self.frame:Show()
     self.isVisible = true
     
@@ -944,7 +944,7 @@ function MetricsPlot:Show()
     -- Force initial render to ensure plot appears active
     self:Render()
     
-    print("Plot window should now be visible, isVisible =", self.isVisible)
+    -- Plot window now visible
 end
 
 -- Hide the plot window

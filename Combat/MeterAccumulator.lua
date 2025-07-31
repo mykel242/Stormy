@@ -214,10 +214,7 @@ end
 
 -- Add detailed event to ring buffer
 function MeterAccumulator:AddDetailedEvent(timestamp, amount, spellId, sourceGUID, sourceName, sourceType, isCrit)
-    -- Debug: Log detailed events occasionally
-    if math.random() < 0.05 then  -- 5% chance
-        print(string.format("[STORMY DEBUG] AddDetailedEvent: spell=%s, amount=%s, time=%s", tostring(spellId), tostring(amount), tostring(timestamp)))
-    end
+    -- Store detailed event data for event breakdown
     
     local buffer = self.rollingData.detailBuffer
     
@@ -307,8 +304,7 @@ function MeterAccumulator:UpdateSecondSummary(timestamp, amount, spellId, isCrit
             spell.crits = spell.crits + 1
         end
     else
-        -- Debug: Log when spellId is invalid
-        print(string.format("[STORMY DEBUG] Invalid spellId: %s, amount: %s, timestamp: %s", tostring(spellId), tostring(amount), tostring(timestamp)))
+        -- Skip events with invalid spellId
     end
 end
 
@@ -535,7 +531,7 @@ function MeterAccumulator:CleanOldData()
                 local pausedRelativeTime = addon.TimingManager and addon.TimingManager:GetRelativeTime(pausedAt) or pausedAt
                 local plotWindowStart = pausedRelativeTime - (plot.config and plot.config.timeWindow or 60)
                 minPausedTime = math.min(minPausedTime, plotWindowStart - 30) -- Extra 30s buffer
-                print(string.format("[STORMY DEBUG] %s is paused, extending retention to preserve data from %d", plotKey, plotWindowStart - 30))
+                -- Extending retention to preserve data for paused plot
             end
         end
     end

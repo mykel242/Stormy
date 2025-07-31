@@ -78,10 +78,7 @@ function SpellCache:GetSpellInfo(spellId)
         cache.spellAccessTime[spellId] = GetTime()
         cache.spellCount = cache.spellCount + 1
         
-        -- Debug: Log successful spell lookups occasionally
-        if math.random() < 0.02 then  -- 2% chance
-            print(string.format("[STORMY DEBUG] Spell cached: ID=%s, Name=%s", tostring(spellId), tostring(name)))
-        end
+        -- Spell successfully cached
         
         -- Cleanup if needed
         if cache.spellCount > CACHE_CONFIG.MAX_SPELLS * CACHE_CONFIG.CLEANUP_THRESHOLD then
@@ -91,8 +88,7 @@ function SpellCache:GetSpellInfo(spellId)
         return name, icon, school
     end
     
-    -- Debug: Log failed spell lookups
-    print(string.format("[STORMY DEBUG] Failed to get spell info for ID: %s", tostring(spellId)))
+    -- Failed to get spell info, return placeholder
     
     return "Unknown Spell #" .. spellId
 end
@@ -100,10 +96,7 @@ end
 -- Get just the spell name (most common use case)
 function SpellCache:GetSpellName(spellId)
     local name = self:GetSpellInfo(spellId)
-    -- Debug: Log spell name lookups occasionally
-    if math.random() < 0.1 then  -- 10% chance to log
-        print(string.format("[STORMY DEBUG] SpellCache lookup: ID=%s, Name=%s", tostring(spellId), tostring(name)))
-    end
+    -- Return cached spell name
     return name
 end
 
