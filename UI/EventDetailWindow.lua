@@ -12,12 +12,12 @@ local EventDetailWindow = addon.EventDetailWindow
 
 -- Configuration
 local WINDOW_CONFIG = {
-    width = 320,
+    width = 380,  -- Match plot window width
     height = 200,
-    titleHeight = 20,
+    titleHeight = 15,  -- Match plot title bar height
     padding = 10,
     lineHeight = 16,
-    backgroundColor = {0, 0, 0, 0.9},
+    backgroundColor = {0, 0, 0, 0.5},  -- Match plot transparency
     borderColor = {0.3, 0.3, 0.3, 1},
     titleColor = {1, 1, 0.5, 1},
     textColor = {1, 1, 1, 1},
@@ -75,22 +75,26 @@ function EventDetailWindow:CreateFrame()
     self.frame:EnableMouse(true)
     self.frame:SetMovable(true)
     
-    -- Backdrop
+    -- Backdrop for proper transparency (like plot windows)
     self.frame:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        edgeSize = 16,
-        insets = {left = 4, right = 4, top = 4, bottom = 4}
+        bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background-Dark",
+        tile = true,
+        tileSize = 32,
+        insets = {left = 0, right = 0, top = 0, bottom = 0}
     })
-    self.frame:SetBackdropColor(unpack(WINDOW_CONFIG.backgroundColor))
-    self.frame:SetBackdropBorderColor(unpack(WINDOW_CONFIG.borderColor))
+    self.frame:SetBackdropColor(0, 0, 0, 0.5)  -- Match plot transparency
     
-    -- Title bar
+    -- Title bar to match plot windows
     local titleBar = CreateFrame("Frame", nil, self.frame)
-    titleBar:SetPoint("TOPLEFT", 4, -4)
-    titleBar:SetPoint("TOPRIGHT", -4, -4)
+    titleBar:SetPoint("TOPLEFT", 0, 0)
+    titleBar:SetPoint("TOPRIGHT", 0, 0)
     titleBar:SetHeight(WINDOW_CONFIG.titleHeight)
     titleBar:EnableMouse(true)
+    
+    -- Title bar background - slightly darker for contrast
+    local titleBg = titleBar:CreateTexture(nil, "ARTWORK")
+    titleBg:SetAllPoints()
+    titleBg:SetColorTexture(0.1, 0.1, 0.1, 0.7)
     
     -- Make window draggable by title bar
     titleBar:SetScript("OnMouseDown", function(frame, button)
@@ -102,22 +106,35 @@ function EventDetailWindow:CreateFrame()
         self.frame:StopMovingOrSizing()
     end)
     
-    -- Title text
+    -- Title text - center it like plot windows
     self.titleText = titleBar:CreateFontString(nil, "OVERLAY")
-    self.titleText:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
-    self.titleText:SetPoint("LEFT", titleBar, "LEFT", 5, 0)
+    self.titleText:SetFont("Fonts\\FRIZQT__.TTF", 12, "OUTLINE")
+    self.titleText:SetPoint("CENTER", titleBar, "CENTER", 0, 0)
     self.titleText:SetText("Event Details")
     self.titleText:SetTextColor(unpack(WINDOW_CONFIG.titleColor))
     
-    -- Close button
+    -- Close button - simple X like in the screenshot
     self.closeButton = CreateFrame("Button", nil, titleBar)
-    self.closeButton:SetSize(16, 16)
-    self.closeButton:SetPoint("RIGHT", titleBar, "RIGHT", -5, 0)
-    self.closeButton:SetNormalTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Up")
-    self.closeButton:SetPushedTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Down")
-    self.closeButton:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight", "ADD")
+    self.closeButton:SetSize(12, 12)
+    self.closeButton:SetPoint("RIGHT", titleBar, "RIGHT", -3, 0)
+    
+    -- Create X with font string
+    local closeText = self.closeButton:CreateFontString(nil, "OVERLAY")
+    closeText:SetFont("Fonts\\FRIZQT__.TTF", 14, "OUTLINE")
+    closeText:SetText("x")
+    closeText:SetPoint("CENTER", 0, 1)
+    closeText:SetTextColor(1, 0.5, 0, 1)  -- Orange like in screenshot
+    
     self.closeButton:SetScript("OnClick", function()
         self:Hide()
+    end)
+    
+    self.closeButton:SetScript("OnEnter", function()
+        closeText:SetTextColor(1, 0.7, 0.2, 1)  -- Brighter on hover
+    end)
+    
+    self.closeButton:SetScript("OnLeave", function()
+        closeText:SetTextColor(1, 0.5, 0, 1)  -- Back to normal
     end)
     
     -- Content area
@@ -162,19 +179,41 @@ function EventDetailWindow:PositionRelativeToPlot(plotFrame)
     -- Clear existing positioning
     self.frame:ClearAllPoints()
     
-    -- Position above the plot, centered horizontally
-    local plotLeft = plotFrame:GetLeft() or 0
-    local plotTop = plotFrame:GetTop() or 0
-    local plotWidth = plotFrame:GetWidth() or 380
+    -- Get both plot windows for vertical stack arrangement
+    local dpsPlot = addon.PlotStateManager and addon.PlotStateManager.registeredPlots and addon.PlotStateManager.registeredPlots.DPS
+    local hpsPlot = addon.PlotStateManager and addon.PlotStateManager.registeredPlots and addon.PlotStateManager.registeredPlots.HPS
     
-    -- Center above the plot with vertical margin
     local windowWidth = WINDOW_CONFIG.width
-    local left = plotLeft + (plotWidth - windowWidth) / 2
-    local top = plotTop + 20  -- 20px above the plot
+    local left, top
+    
+    -- Position at the top of the vertical stack
+    if dpsPlot and hpsPlot and dpsPlot.frame and hpsPlot.frame then
+        local dpsFrame = dpsPlot.frame
+        local hpsFrame = hpsPlot.frame
+        
+        -- Find which plot is on top
+        local topPlot = (dpsFrame:GetTop() or 0) > (hpsFrame:GetTop() or 0) and dpsFrame or hpsFrame
+        
+        -- Position above the top plot
+        left = topPlot:GetLeft() or 0
+        top = (topPlot:GetTop() or 0) + 5  -- Small gap above top plot
+        
+        -- Ensure consistent width alignment
+        self.frame:SetWidth(topPlot:GetWidth() or WINDOW_CONFIG.width)
+    else
+        -- Fallback: position above the clicked plot
+        left = plotFrame:GetLeft() or 0
+        top = (plotFrame:GetTop() or 0) + 5
+        self.frame:SetWidth(plotFrame:GetWidth() or WINDOW_CONFIG.width)
+    end
     
     -- Ensure it stays on screen
-    left = math.max(20, math.min(left, UIParent:GetWidth() - windowWidth - 20))
-    top = math.min(top, UIParent:GetHeight() - WINDOW_CONFIG.height)
+    left = math.max(20, math.min(left, UIParent:GetWidth() - self.frame:GetWidth() - 20))
+    top = math.min(top, UIParent:GetHeight() - 20)
+    
+    -- Auto-adjust height based on content
+    local contentHeight = 100  -- Base height, will be adjusted by content
+    self.frame:SetHeight(contentHeight)
     
     self.frame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left, top)
 end
@@ -206,15 +245,7 @@ function EventDetailWindow:PopulateContent(timestamp, summary, events)
     local lineIndex = 1
     local yOffset = -5
     
-    -- Time ago
-    local now = addon.TimingManager and addon.TimingManager:GetCurrentRelativeTime() or GetTime()
-    local timeAgo = math.floor(now - timestamp)
-    local line = self:GetOrCreateLine(lineIndex)
-    line:SetText(string.format("%d seconds ago", timeAgo))
-    line:SetPoint("TOPLEFT", self.content, "TOPLEFT", 0, yOffset)
-    line:Show()
-    lineIndex = lineIndex + 1
-    yOffset = yOffset - WINDOW_CONFIG.lineHeight - 5
+    -- Timestamp label removed per user request - not useful data
     
     -- Total damage/healing
     if summary and summary.totalDamage > 0 then
@@ -249,8 +280,25 @@ function EventDetailWindow:PopulateContent(timestamp, summary, events)
     lineIndex = lineIndex + 1
     yOffset = yOffset - WINDOW_CONFIG.lineHeight
     
-    -- Spell details
-    if summary and summary.spells then
+    -- Spell details from actual events in this second
+    if events and #events > 0 then
+        -- Calculate spell breakdown from the actual events
+        local spellBreakdown = self:CalculateSpellBreakdown(events)
+        local sortedSpells = self:SortSpellsByDamage(spellBreakdown, summary.totalDamage)
+        
+        for i, spellData in ipairs(sortedSpells) do
+            if i > 5 then break end  -- Show top 5 spells
+            
+            line = self:GetOrCreateLine(lineIndex)
+            line:SetText(spellData.text)
+            line:SetTextColor(unpack(WINDOW_CONFIG.spellTextColor))
+            line:SetPoint("TOPLEFT", self.content, "TOPLEFT", 20, yOffset)
+            line:Show()
+            lineIndex = lineIndex + 1
+            yOffset = yOffset - WINDOW_CONFIG.lineHeight
+        end
+    elseif summary and summary.spells then
+        -- Fallback to summary if no events (shouldn't happen normally)
         local sortedSpells = self:SortSpellsByDamage(summary.spells, summary.totalDamage)
         
         for i, spellData in ipairs(sortedSpells) do
@@ -276,6 +324,36 @@ end
 -- UTILITY FUNCTIONS
 -- =============================================================================
 
+-- Calculate spell breakdown from actual events
+function EventDetailWindow:CalculateSpellBreakdown(events)
+    local spells = {}
+    
+    for _, event in ipairs(events) do
+        local spellId = event.spellId
+        if spellId and spellId > 0 then
+            -- Get base spell ID to group ranks together
+            local baseSpellId = addon.SpellCache and addon.SpellCache:GetBaseSpellId(spellId) or spellId
+            
+            if not spells[baseSpellId] then
+                spells[baseSpellId] = {
+                    total = 0,
+                    count = 0,
+                    crits = 0
+                }
+            end
+            
+            local spell = spells[baseSpellId]
+            spell.total = spell.total + event.amount
+            spell.count = spell.count + 1
+            if event.isCrit then
+                spell.crits = spell.crits + 1
+            end
+        end
+    end
+    
+    return spells
+end
+
 function EventDetailWindow:FormatNumberHumanized(value)
     if value >= 1e9 then
         return string.format("%.2fB", value / 1e9)
@@ -293,7 +371,7 @@ function EventDetailWindow:SortSpellsByDamage(spells, totalDamage)
     
     for spellId, spellInfo in pairs(spells) do
         local name = addon.SpellCache:GetSpellName(spellId) or "Unknown"
-        local damage = spellInfo.damage or 0
+        local damage = spellInfo.total or 0  -- Changed from 'damage' to 'total'
         local hits = spellInfo.count or 0
         local crits = spellInfo.crits or 0
         local pct = totalDamage > 0 and (damage / totalDamage * 100) or 0

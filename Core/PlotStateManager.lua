@@ -15,8 +15,12 @@ local sharedState = {
     isPaused = false,
     pauseTimestamp = nil,
     selectedBar = nil,
+    selectedPlotType = nil,  -- Track which plot type the selection came from
     registeredPlots = {}  -- Table of registered plot instances
 }
+
+-- Make registered plots accessible for positioning
+PlotStateManager.registeredPlots = sharedState.registeredPlots
 
 -- =============================================================================
 -- STATE MANAGEMENT
@@ -42,6 +46,10 @@ function PlotStateManager:GetSelectedBar()
     return sharedState.selectedBar
 end
 
+function PlotStateManager:GetSelectedPlotType()
+    return sharedState.selectedPlotType
+end
+
 -- =============================================================================
 -- SYNCHRONIZED ACTIONS
 -- =============================================================================
@@ -51,6 +59,7 @@ function PlotStateManager:PauseAll(timestamp, initiatingPlotType)
     sharedState.isPaused = true
     sharedState.pauseTimestamp = addon.TimingManager:GetCurrentRelativeTime()
     sharedState.selectedBar = timestamp
+    sharedState.selectedPlotType = initiatingPlotType
     
     -- Pause all registered plots
     for plotType, plot in pairs(sharedState.registeredPlots) do
@@ -73,6 +82,7 @@ function PlotStateManager:ResumeAll(initiatingPlotType)
     sharedState.isPaused = false
     sharedState.pauseTimestamp = nil
     sharedState.selectedBar = nil
+    sharedState.selectedPlotType = nil
     
     -- Resume all registered plots
     for plotType, plot in pairs(sharedState.registeredPlots) do
@@ -99,6 +109,30 @@ function PlotStateManager:ResumeAll(initiatingPlotType)
     
     print(string.format("[PlotStateManager] All plots resumed by %s", 
           initiatingPlotType or "unknown"))
+end
+
+-- =============================================================================
+-- SELECTION MANAGEMENT
+-- =============================================================================
+
+function PlotStateManager:ChangeSelection(timestamp, initiatingPlotType)
+    -- Update shared selection state
+    sharedState.selectedBar = timestamp
+    sharedState.selectedPlotType = initiatingPlotType
+    
+    -- Update selection for all registered plots
+    for plotType, plot in pairs(sharedState.registeredPlots) do
+        if plot then
+            plot.plotState.selectedBar = timestamp
+        end
+    end
+    
+    -- Force render on all plots after state is updated (important for paused mode)
+    for plotType, plot in pairs(sharedState.registeredPlots) do
+        if plot and plot.Render then
+            plot:Render()
+        end
+    end
 end
 
 -- =============================================================================
