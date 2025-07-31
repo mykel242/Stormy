@@ -104,6 +104,11 @@ function addon:OnInitialize()
         -- print("[STORMY] EventBus initialized")
     end
     
+    if self.PlotStateManager then
+        self.PlotStateManager:Initialize()
+        -- print("[STORMY] PlotStateManager initialized")
+    end
+    
     -- Combat processing
     if self.EventProcessor then
         local success, error = pcall(function()

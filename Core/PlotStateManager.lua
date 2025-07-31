@@ -23,11 +23,34 @@ local sharedState = {
 PlotStateManager.registeredPlots = sharedState.registeredPlots
 
 -- =============================================================================
+-- INITIALIZATION
+-- =============================================================================
+
+function PlotStateManager:Initialize()
+    -- Ensure shared state starts clean
+    sharedState.isPaused = false
+    sharedState.pauseTimestamp = nil
+    sharedState.selectedBar = nil
+    sharedState.selectedPlotType = nil
+    sharedState.registeredPlots = {}
+end
+
+-- =============================================================================
 -- STATE MANAGEMENT
 -- =============================================================================
 
 function PlotStateManager:RegisterPlot(plot, plotType)
     sharedState.registeredPlots[plotType] = plot
+    
+    -- Synchronize plot state with shared state on registration
+    plot.plotState.isPaused = sharedState.isPaused
+    plot.plotState.selectedBar = sharedState.selectedBar
+    plot.plotState.hoveredBar = nil  -- Don't sync hover state across plots
+    
+    -- If shared state is paused, create snapshot for this plot
+    if sharedState.isPaused and plot.CreateSnapshot then
+        plot:CreateSnapshot()
+    end
 end
 
 function PlotStateManager:UnregisterPlot(plotType)

@@ -940,6 +940,10 @@ function MetricsPlot:Show()
     addon.PlotStateManager:RegisterPlot(self, self.plotType)
     
     self:StartUpdates()
+    
+    -- Force initial render to ensure plot appears active
+    self:Render()
+    
     print("Plot window should now be visible, isVisible =", self.isVisible)
 end
 
