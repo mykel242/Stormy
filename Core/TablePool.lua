@@ -15,21 +15,27 @@ local TablePool = addon.TablePool
 local POOL_CONFIG = {
     EVENT_POOL_SIZE = 50,       -- Combat events
     CALC_POOL_SIZE = 20,        -- Calculation temporaries
-    UI_POOL_SIZE = 10           -- UI update data
+    UI_POOL_SIZE = 10,          -- UI update data
+    DETAIL_POOL_SIZE = 200,     -- Event detail objects
+    SUMMARY_POOL_SIZE = 60      -- Second summary objects
 }
 
 -- Separate pools by purpose to prevent cross-contamination
 local pools = {
     event = {},
     calc = {},
-    ui = {}
+    ui = {},
+    detail = {},
+    summary = {}
 }
 
 -- Pool statistics
 local stats = {
     event = { created = 0, reused = 0, corrupted = 0 },
     calc = { created = 0, reused = 0, corrupted = 0 },
-    ui = { created = 0, reused = 0, corrupted = 0 }
+    ui = { created = 0, reused = 0, corrupted = 0 },
+    detail = { created = 0, reused = 0, corrupted = 0 },
+    summary = { created = 0, reused = 0, corrupted = 0 }
 }
 
 -- Template structures for each pool type
@@ -51,6 +57,23 @@ local TEMPLATES = {
         value = 0,
         percent = 0,
         text = ""
+    },
+    detail = {
+        timestamp = 0,
+        amount = 0,
+        spellId = 0,
+        sourceGUID = "",
+        sourceName = "",
+        sourceType = 0,     -- 0=player, 1=pet, 2=guardian
+        isCrit = false
+    },
+    summary = {
+        timestamp = 0,
+        totalDamage = 0,
+        eventCount = 0,
+        critCount = 0,
+        critDamage = 0,
+        spells = {}         -- Will be cleared on release
     }
 }
 
@@ -162,6 +185,30 @@ function TablePool:ReleaseUI(t)
     self:Release("ui", t)
 end
 
+-- Get/Release event detail tables
+function TablePool:GetDetail()
+    return self:Get("detail")
+end
+
+function TablePool:ReleaseDetail(t)
+    self:Release("detail", t)
+end
+
+-- Get/Release summary tables
+function TablePool:GetSummary()
+    return self:Get("summary")
+end
+
+function TablePool:ReleaseSummary(t)
+    -- Clear the spells table before releasing
+    if t and t.spells then
+        for k in pairs(t.spells) do
+            t.spells[k] = nil
+        end
+    end
+    self:Release("summary", t)
+end
+
 -- =============================================================================
 -- DEBUGGING AND MONITORING
 -- =============================================================================
@@ -234,6 +281,12 @@ function TablePool:Initialize()
     end
     for i = 1, 3 do
         self:Release("ui", self:Get("ui"))
+    end
+    for i = 1, 20 do
+        self:Release("detail", self:Get("detail"))
+    end
+    for i = 1, 10 do
+        self:Release("summary", self:Get("summary"))
     end
     
     -- Clear stats after pre-allocation

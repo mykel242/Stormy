@@ -68,8 +68,25 @@ function MeterAccumulator:New(meterType)
             -- Cached window totals (invalidated on new data)
             cachedTotals = {},
             lastCacheTime = 0,
-            cacheValid = false
-        }
+            cacheValid = false,
+            
+            -- NEW: Ring buffer for detailed events
+            detailBuffer = {
+                buffer = nil,      -- Will be initialized based on size
+                size = 9000,       -- Default, will be configured
+                head = 1,          -- Next write position
+                tail = 1,          -- Oldest data position
+                count = 0,         -- Current number of items
+                timeIndex = {},    -- [flooredTimestamp] = {startIdx, endIdx}
+                initialized = false
+            },
+            
+            -- Per-second summaries
+            secondSummaries = {}   -- [timestamp] = summary table from pool
+        },
+        
+        -- Configuration
+        detailBufferMode = "AUTO"  -- AUTO, SOLO, DUNGEON, RAID, MYTHIC, CUSTOM
     }
     
     -- Copy methods to instance
@@ -127,6 +144,227 @@ function MeterAccumulator:AddEvent(timestamp, sourceGUID, amount, isPlayer, isPe
     if self.OnEvent then
         self:OnEvent(timestamp, sourceGUID, amount, isPlayer, isPet, isCritical, extraData)
     end
+end
+
+-- =============================================================================
+-- RING BUFFER MANAGEMENT
+-- =============================================================================
+
+-- Initialize the detail buffer with appropriate size
+function MeterAccumulator:InitializeDetailBuffer()
+    local buffer = self.rollingData.detailBuffer
+    
+    -- Don't reinitialize if already done
+    if buffer.initialized then
+        return
+    end
+    
+    -- Determine optimal buffer size
+    buffer.size = self:GetOptimalBufferSize()
+    
+    -- Pre-allocate all tables
+    buffer.buffer = {}
+    for i = 1, buffer.size do
+        buffer.buffer[i] = addon.TablePool:GetDetail()
+    end
+    
+    buffer.head = 1
+    buffer.tail = 1
+    buffer.count = 0
+    buffer.timeIndex = {}
+    buffer.initialized = true
+end
+
+-- Get optimal buffer size based on mode or activity
+function MeterAccumulator:GetOptimalBufferSize()
+    local mode = self.detailBufferMode or "AUTO"
+    local Constants = addon.Constants
+    
+    if mode == "AUTO" then
+        -- Use recent event rate to determine size
+        local recentRate = self:GetRecentEventRate()
+        if recentRate < Constants.DETAIL_BUFFER.AUTO_THRESHOLDS.SOLO then
+            return Constants.DETAIL_BUFFER.SIZES.SOLO
+        elseif recentRate < Constants.DETAIL_BUFFER.AUTO_THRESHOLDS.DUNGEON then
+            return Constants.DETAIL_BUFFER.SIZES.DUNGEON
+        elseif recentRate < Constants.DETAIL_BUFFER.AUTO_THRESHOLDS.RAID then
+            return Constants.DETAIL_BUFFER.SIZES.RAID
+        else
+            return Constants.DETAIL_BUFFER.SIZES.MYTHIC
+        end
+    else
+        return Constants.DETAIL_BUFFER.SIZES[mode] or Constants.DETAIL_BUFFER.SIZES.CUSTOM
+    end
+end
+
+-- Get recent event rate (events per second over last 30 seconds)
+function MeterAccumulator:GetRecentEventRate()
+    local now = GetTime()
+    local cutoff = now - 30
+    local count = 0
+    
+    for timestamp in pairs(self.rollingData.values) do
+        if timestamp > cutoff then
+            count = count + 1
+        end
+    end
+    
+    return count / 30
+end
+
+-- Add detailed event to ring buffer
+function MeterAccumulator:AddDetailedEvent(timestamp, amount, spellId, sourceGUID, sourceName, sourceType, isCrit)
+    -- Debug: Log detailed events occasionally
+    if math.random() < 0.05 then  -- 5% chance
+        print(string.format("[STORMY DEBUG] AddDetailedEvent: spell=%s, amount=%s, time=%s", tostring(spellId), tostring(amount), tostring(timestamp)))
+    end
+    
+    local buffer = self.rollingData.detailBuffer
+    
+    -- Initialize if needed
+    if not buffer.initialized then
+        self:InitializeDetailBuffer()
+    end
+    
+    -- Get table at head position (already allocated)
+    local detail = buffer.buffer[buffer.head]
+    
+    -- Populate with new data
+    detail.timestamp = timestamp
+    detail.amount = amount
+    detail.spellId = spellId or 0
+    detail.sourceGUID = sourceGUID or ""
+    detail.sourceName = sourceName or ""
+    detail.sourceType = sourceType or 0
+    detail.isCrit = isCrit or false
+    
+    -- Update time index
+    local flooredTime = math.floor(timestamp)
+    local timeEntry = buffer.timeIndex[flooredTime]
+    if not timeEntry then
+        buffer.timeIndex[flooredTime] = {startIdx = buffer.head, endIdx = buffer.head, count = 1}
+    else
+        timeEntry.endIdx = buffer.head
+        timeEntry.count = timeEntry.count + 1
+    end
+    
+    -- Update second summary
+    self:UpdateSecondSummary(flooredTime, amount, spellId, isCrit)
+    
+    -- Advance head
+    buffer.head = buffer.head % buffer.size + 1
+    
+    -- Handle wrap-around
+    if buffer.count < buffer.size then
+        buffer.count = buffer.count + 1
+    else
+        -- Overwriting old data
+        buffer.tail = buffer.tail % buffer.size + 1
+        -- Clean up old time index entry
+        self:CleanupOldTimeIndex(buffer.buffer[buffer.tail].timestamp)
+    end
+end
+
+-- Update per-second summary
+function MeterAccumulator:UpdateSecondSummary(timestamp, amount, spellId, isCrit)
+    local summary = self.rollingData.secondSummaries[timestamp]
+    
+    if not summary then
+        summary = addon.TablePool:GetSummary()
+        summary.timestamp = timestamp
+        summary.totalDamage = 0
+        summary.eventCount = 0
+        summary.critCount = 0
+        summary.critDamage = 0
+        -- spells table already exists from pool
+        self.rollingData.secondSummaries[timestamp] = summary
+    end
+    
+    -- Update totals
+    summary.totalDamage = summary.totalDamage + amount
+    summary.eventCount = summary.eventCount + 1
+    
+    if isCrit then
+        summary.critCount = summary.critCount + 1
+        summary.critDamage = summary.critDamage + amount
+    end
+    
+    -- Update spell breakdown
+    if spellId and spellId > 0 then
+        local baseSpellId = addon.SpellCache:GetBaseSpellId(spellId)
+        if not summary.spells[baseSpellId] then
+            summary.spells[baseSpellId] = {
+                total = 0,
+                count = 0,
+                crits = 0
+            }
+        end
+        
+        local spell = summary.spells[baseSpellId]
+        spell.total = spell.total + amount
+        spell.count = spell.count + 1
+        if isCrit then
+            spell.crits = spell.crits + 1
+        end
+    else
+        -- Debug: Log when spellId is invalid
+        print(string.format("[STORMY DEBUG] Invalid spellId: %s, amount: %s, timestamp: %s", tostring(spellId), tostring(amount), tostring(timestamp)))
+    end
+end
+
+-- Clean up old time index entry
+function MeterAccumulator:CleanupOldTimeIndex(timestamp)
+    if not timestamp then return end
+    
+    local flooredTime = math.floor(timestamp)
+    self.rollingData.detailBuffer.timeIndex[flooredTime] = nil
+    
+    -- Also clean up second summary
+    local summary = self.rollingData.secondSummaries[flooredTime]
+    if summary then
+        addon.TablePool:ReleaseSummary(summary)
+        self.rollingData.secondSummaries[flooredTime] = nil
+    end
+end
+
+-- Get events for a specific second
+function MeterAccumulator:GetSecondDetails(timestamp)
+    local buffer = self.rollingData.detailBuffer
+    local flooredTime = math.floor(timestamp)
+    
+    -- First check if we have a summary
+    local summary = self.rollingData.secondSummaries[flooredTime]
+    if not summary then
+        return nil
+    end
+    
+    -- Get the events if requested
+    local timeEntry = buffer.timeIndex[flooredTime]
+    if not timeEntry then
+        return summary
+    end
+    
+    -- Collect events from ring buffer
+    local events = {}
+    local idx = timeEntry.startIdx
+    for i = 1, timeEntry.count do
+        local event = buffer.buffer[idx]
+        if math.floor(event.timestamp) == flooredTime then
+            table.insert(events, {
+                timestamp = event.timestamp,
+                amount = event.amount,
+                spellId = event.spellId,
+                sourceGUID = event.sourceGUID,
+                sourceName = event.sourceName,
+                sourceType = event.sourceType,
+                isCrit = event.isCrit
+            })
+        end
+        
+        idx = idx % buffer.size + 1
+    end
+    
+    return summary, events
 end
 
 -- =============================================================================
@@ -278,6 +516,34 @@ function MeterAccumulator:CleanOldData()
     for timestamp in pairs(self.rollingData.events) do
         if timestamp < cutoffTime then
             self.rollingData.events[timestamp] = nil
+        end
+    end
+    
+    -- Clean second summaries older than detail retention time
+    -- But preserve data that might be viewed by paused plots
+    local detailCutoff = now - addon.Constants.DETAIL_BUFFER.RETENTION_TIME
+    
+    -- Check if any plots are paused and extend retention accordingly
+    local minPausedTime = detailCutoff
+    
+    -- Check both DPS and HPS plots if they exist
+    for _, plotKey in ipairs({"DPSPlot", "HPSPlot"}) do
+        local plot = addon[plotKey]
+        if plot and plot.plotState and plot.plotState.mode == "PAUSED" then
+            local pausedAt = plot.plotState.pausedAt
+            if pausedAt then
+                local pausedRelativeTime = addon.TimingManager and addon.TimingManager:GetRelativeTime(pausedAt) or pausedAt
+                local plotWindowStart = pausedRelativeTime - (plot.config and plot.config.timeWindow or 60)
+                minPausedTime = math.min(minPausedTime, plotWindowStart - 30) -- Extra 30s buffer
+                print(string.format("[STORMY DEBUG] %s is paused, extending retention to preserve data from %d", plotKey, plotWindowStart - 30))
+            end
+        end
+    end
+    
+    for timestamp, summary in pairs(self.rollingData.secondSummaries) do
+        if timestamp < minPausedTime then
+            addon.TablePool:ReleaseSummary(summary)
+            self.rollingData.secondSummaries[timestamp] = nil
         end
     end
     
@@ -499,6 +765,22 @@ function MeterAccumulator:Reset()
     self.rollingData.events = {}
     self.rollingData.cachedTotals = {}
     self.rollingData.cacheValid = false
+    
+    -- Clear detail buffer
+    if self.rollingData.detailBuffer.initialized then
+        local buffer = self.rollingData.detailBuffer
+        -- Reset indices but keep pre-allocated tables
+        buffer.head = 1
+        buffer.tail = 1
+        buffer.count = 0
+        buffer.timeIndex = {}
+    end
+    
+    -- Release and clear second summaries
+    for timestamp, summary in pairs(self.rollingData.secondSummaries) do
+        addon.TablePool:ReleaseSummary(summary)
+    end
+    self.rollingData.secondSummaries = {}
     
     -- Allow subclasses to reset additional data
     if self.OnReset then

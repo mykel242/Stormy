@@ -15,8 +15,10 @@
 # Core Foundation
 Core/Constants.lua
 Core/TablePool.lua
+Core/SpellCache.lua
 Core/TimingManager.lua
 Core/EventBus.lua
+Core/PlotStateManager.lua
 Core/MeterManager.lua
 
 # Meter Framework
@@ -33,9 +35,13 @@ Tracking/EntityTracker.lua
 Tracking/RingBuffer.lua
 
 # UI Components
+UI/EventDetailWindow.lua
 UI/DamageMeter.lua
 UI/HealingMeter.lua
 UI/MetricsPlot.lua
+
+# Performance Testing (optional)
+tests/Performance/PerformanceTests.lua
 
 # Main Initialization
 STORMY.lua
