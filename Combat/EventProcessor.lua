@@ -276,7 +276,7 @@ function EventProcessor:ProcessEvent(...)
         end
         
         self:ProcessHealingEvent(timestamp, sourceGUID, destGUID, spellId, amount, 
-                                critical, isPlayer, isPet, overhealing, absorb)
+                                critical, isPlayer, isPet, overhealing, absorb, sourceName)
     end
 end
 
@@ -319,9 +319,22 @@ end
 
 -- Process healing event (zero allocation)
 function EventProcessor:ProcessHealingEvent(timestamp, sourceGUID, destGUID, spellId, amount, 
-                                           critical, isPlayer, isPet, overhealing, absorbed)
+                                           critical, isPlayer, isPet, overhealing, absorbed, sourceName)
     -- Convert timestamp to relative time
     local relativeTime = addon.TimingManager:GetRelativeTime(timestamp)
+    
+    -- Determine source type for detailed tracking
+    local sourceType = 0  -- Default to player
+    if isPet then
+        sourceType = 1  -- Pet
+    elseif sourceGUID and sourceGUID:match("^Creature") then
+        sourceType = 2  -- Guardian/other controllable entity
+    end
+    
+    -- Store entity name for SpellCache
+    if sourceName and sourceGUID and addon.SpellCache then
+        addon.SpellCache:StoreEntityName(sourceGUID, sourceName)
+    end
     
     -- Determine if this is a HOT vs direct heal
     local isHOT = false
@@ -334,7 +347,8 @@ function EventProcessor:ProcessHealingEvent(timestamp, sourceGUID, destGUID, spe
     if addon.MeterManager then
         addon.MeterManager:RouteHealingEvent(
             relativeTime, sourceGUID, amount, absorbed or 0, 
-            isPlayer, isPet, critical, overhealing or 0
+            isPlayer, isPet, critical, overhealing or 0,
+            spellId, sourceName, sourceType
         )
     end
     

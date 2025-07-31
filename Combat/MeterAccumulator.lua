@@ -214,6 +214,11 @@ end
 
 -- Add detailed event to ring buffer
 function MeterAccumulator:AddDetailedEvent(timestamp, amount, spellId, sourceGUID, sourceName, sourceType, isCrit)
+    -- Debug: Log detailed events occasionally
+    if math.random() < 0.05 then  -- 5% chance
+        print(string.format("[STORMY DEBUG] AddDetailedEvent: spell=%s, amount=%s, time=%s", tostring(spellId), tostring(amount), tostring(timestamp)))
+    end
+    
     local buffer = self.rollingData.detailBuffer
     
     -- Initialize if needed
@@ -301,6 +306,9 @@ function MeterAccumulator:UpdateSecondSummary(timestamp, amount, spellId, isCrit
         if isCrit then
             spell.crits = spell.crits + 1
         end
+    else
+        -- Debug: Log when spellId is invalid
+        print(string.format("[STORMY DEBUG] Invalid spellId: %s, amount: %s, timestamp: %s", tostring(spellId), tostring(amount), tostring(timestamp)))
     end
 end
 
@@ -512,9 +520,28 @@ function MeterAccumulator:CleanOldData()
     end
     
     -- Clean second summaries older than detail retention time
+    -- But preserve data that might be viewed by paused plots
     local detailCutoff = now - addon.Constants.DETAIL_BUFFER.RETENTION_TIME
+    
+    -- Check if any plots are paused and extend retention accordingly
+    local minPausedTime = detailCutoff
+    
+    -- Check both DPS and HPS plots if they exist
+    for _, plotKey in ipairs({"DPSPlot", "HPSPlot"}) do
+        local plot = addon[plotKey]
+        if plot and plot.plotState and plot.plotState.mode == "PAUSED" then
+            local pausedAt = plot.plotState.pausedAt
+            if pausedAt then
+                local pausedRelativeTime = addon.TimingManager and addon.TimingManager:GetRelativeTime(pausedAt) or pausedAt
+                local plotWindowStart = pausedRelativeTime - (plot.config and plot.config.timeWindow or 60)
+                minPausedTime = math.min(minPausedTime, plotWindowStart - 30) -- Extra 30s buffer
+                print(string.format("[STORMY DEBUG] %s is paused, extending retention to preserve data from %d", plotKey, plotWindowStart - 30))
+            end
+        end
+    end
+    
     for timestamp, summary in pairs(self.rollingData.secondSummaries) do
-        if timestamp < detailCutoff then
+        if timestamp < minPausedTime then
             addon.TablePool:ReleaseSummary(summary)
             self.rollingData.secondSummaries[timestamp] = nil
         end

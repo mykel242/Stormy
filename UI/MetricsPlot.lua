@@ -55,14 +55,20 @@ function MetricsPlot:New(plotType)
         
         -- State
         isVisible = false,
-        isPaused = false,
         
-        -- Plot interaction state
+        -- Single source of truth for plot state
         plotState = {
-            mode = "LIVE",             -- LIVE, PAUSED
-            pausedAt = nil,            -- timestamp when paused
-            selectedTimestamp = nil,   -- currently selected second
-            hoveredTimestamp = nil,    -- currently hovered second
+            isPaused = false,           -- SINGLE pause state flag
+            selectedBar = nil,          -- currently selected bar timestamp
+            hoveredBar = nil,           -- currently hovered bar timestamp
+            snapshot = {                -- frozen data when paused (nil when live)
+                timestamp = nil,        -- when snapshot was taken
+                dpsPoints = {},
+                hpsPoints = {},
+                maxDPS = 0,
+                maxHPS = 0,
+                isValid = false         -- marked invalid instead of garbage collected
+            }
         },
         
         -- Data
@@ -80,6 +86,9 @@ function MetricsPlot:New(plotType)
         plotFrame = nil,
         detailFrame = nil,
         detailContent = nil,
+        pausedOverlay = nil,
+        pausedText = nil,
+        resumeButton = nil,
         
         -- Texture management
         texturePool = {},
@@ -153,6 +162,7 @@ function MetricsPlot:UpdateData()
         return
     end
     
+    -- Always use current time for live data collection
     local now = addon.TimingManager:GetCurrentRelativeTime()
     local startTime = now - self.config.timeWindow
     
@@ -342,18 +352,43 @@ end
 -- Convert data coordinates to screen coordinates for overlapping plot with shared scale
 function MetricsPlot:DataToScreen(time, value, baselineOffset)
     local plotWidth = self.config.width - 60
-    local plotHeight = self.config.height - 10  -- Reduced margin (5px bottom + 5px top)
+    local plotHeight = self.config.height - 25  -- Account for title bar (15px) + margins (10px)
     
-    -- Time to X coordinate (right to left scrolling)
-    local now = addon.TimingManager:GetCurrentRelativeTime()
+    -- Simple logic: if paused, use snapshot time reference; if live, use current time
+    local now
+    if self.plotState.isPaused and self.plotState.snapshot.isValid then
+        -- PAUSED: Use frozen snapshot timestamp directly - no animation
+        now = self.plotState.snapshot.timestamp
+        
+        -- DEBUG: Show frozen time calculation (occasionally)
+        if math.random() < 0.001 then  -- Very rare to avoid spam
+            print(string.format("[STORMY DEBUG] PAUSED DataToScreen: frozen_now=%.1f, point_time=%.1f", now, time))
+        end
+    else
+        -- LIVE: Use current time - bars animate from right to left
+        now = addon.TimingManager:GetCurrentRelativeTime()
+        
+        -- DEBUG: Show live time calculation (occasionally)
+        if math.random() < 0.001 then  -- Very rare to avoid spam
+            print(string.format("[STORMY DEBUG] LIVE DataToScreen: current_now=%.1f, point_time=%.1f", now, time))
+        end
+    end
+    
+    -- Convert time to X coordinate
     local timeRange = self.config.timeWindow
     local normalizedTime = (time - (now - timeRange)) / timeRange
     local x = 50 + (normalizedTime * plotWidth)
     
-    -- Value to Y coordinate using shared max value
-    local maxValue = math.max(self.maxDPS or 0, self.maxHPS or 0, self.config.minScale)
+    -- Convert value to Y coordinate using appropriate scale
+    local maxValue
+    if self.plotState.isPaused and self.plotState.snapshot.isValid then
+        maxValue = math.max(self.plotState.snapshot.maxDPS or 0, self.plotState.snapshot.maxHPS or 0, self.config.minScale)
+    else
+        maxValue = math.max(self.maxDPS or 0, self.maxHPS or 0, self.config.minScale)
+    end
+    
     local normalizedValue = maxValue > 0 and (value / maxValue) or 0
-    local y = 5 + (normalizedValue * (plotHeight - 5)) + (baselineOffset or 0)  -- Adjust for margins
+    local y = 5 + (normalizedValue * (plotHeight - 5)) + (baselineOffset or 0)
     
     return x, y
 end
@@ -361,10 +396,15 @@ end
 -- Draw grid lines and Y-axis with shared scale
 function MetricsPlot:DrawGrid()
     local plotWidth = self.config.width - 60
-    local plotHeight = self.config.height - 10  -- Reduced margin
+    local plotHeight = self.config.height - 25  -- Account for title bar (15px) + margins (10px)
     
-    -- Calculate shared max value
-    local maxValue = math.max(self.maxDPS or 0, self.maxHPS or 0, self.config.minScale)
+    -- Use appropriate scale: snapshot scale when paused, live scale when not
+    local maxValue
+    if self.plotState.isPaused and self.plotState.snapshot.isValid then
+        maxValue = math.max(self.plotState.snapshot.maxDPS or 0, self.plotState.snapshot.maxHPS or 0, self.config.minScale)
+    else
+        maxValue = math.max(self.maxDPS or 0, self.maxHPS or 0, self.config.minScale)
+    end
     
     -- Horizontal grid lines (subtle)
     for i = 0, self.config.gridLines do
@@ -441,9 +481,16 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
     end
     
     local plotWidth = self.config.width - 60
-    local plotHeight = self.config.height - 10  -- Reduced margin
+    local plotHeight = self.config.height - 25  -- Account for title bar (15px) + margins (10px)
     local barWidth = plotWidth / self.config.timeWindow  -- Width per second
-    local maxValue = math.max(self.maxDPS or 0, self.maxHPS or 0, self.config.minScale)
+    
+    -- Use appropriate scale: snapshot scale when paused, live scale when not
+    local maxValue
+    if self.plotState.isPaused and self.plotState.snapshot.isValid then
+        maxValue = math.max(self.plotState.snapshot.maxDPS or 0, self.plotState.snapshot.maxHPS or 0, self.config.minScale)
+    else
+        maxValue = math.max(self.maxDPS or 0, self.maxHPS or 0, self.config.minScale)
+    end
     
     for i, point in ipairs(points) do
         if point.value > 0 then  -- Only draw bars for non-zero values
@@ -455,16 +502,42 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
             yTop = math.min(yTop, maxY)
             
             -- Check if this bar is selected for dimming
-            local isSelected = self.plotState.selectedTimestamp and 
-                             math.floor(point.time) == self.plotState.selectedTimestamp
+            local isSelected = self.plotState.selectedBar and 
+                             math.floor(point.time) == self.plotState.selectedBar
             
-            -- Base color with selection dimming
+            -- Check if this bar is hovered for highlighting (more forgiving matching)
+            local isHovered = false
+            if self.plotState.hoveredBar then
+                local pointTime = math.floor(point.time)
+                local hoveredTime = self.plotState.hoveredBar
+                -- Allow for small timing differences (within 1 second)
+                isHovered = math.abs(pointTime - hoveredTime) <= 1
+                
+                -- DEBUG: Show when we should be highlighting (very occasionally)
+                if isHovered and math.random() < 0.05 then  -- 5% chance when hovered
+                    print(string.format("[STORMY DEBUG] HIGHLIGHTING BAR: point_time=%d, hoveredBar=%d, paused=%s", 
+                          pointTime, hoveredTime, tostring(self.plotState.isPaused)))
+                end
+            end
+            
+            -- Base color with selection dimming and hover highlighting
             local barColor = {color[1], color[2], color[3], color[4]}
-            if not isSelected and self.plotState.selectedTimestamp then
+            if not isSelected and self.plotState.selectedBar then
                 -- Dim unselected bars when something is selected
                 barColor[1] = barColor[1] * 0.5
                 barColor[2] = barColor[2] * 0.5
                 barColor[3] = barColor[3] * 0.5
+            elseif isHovered then
+                -- Brighten hovered bar by 30%
+                barColor[1] = math.min(1.0, barColor[1] * 1.3)
+                barColor[2] = math.min(1.0, barColor[2] * 1.3)
+                barColor[3] = math.min(1.0, barColor[3] * 1.3)
+                
+                -- DEBUG: Show color change for hover
+                if math.random() < 0.1 then  -- 10% chance
+                    print(string.format("[STORMY DEBUG] HOVER COLOR: R=%.2f G=%.2f B=%.2f", 
+                          barColor[1], barColor[2], barColor[3]))
+                end
             end
             
             -- Special tracking bar: use distinct colors for 10-second boundaries
@@ -476,11 +549,16 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
                     barColor = {40/255, 190/255, 250/255, 1}  -- Light blue for HPS
                 end
                 
-                -- Apply selection dimming to tracking colors too
-                if not isSelected and self.plotState.selectedTimestamp then
+                -- Apply selection dimming and hover highlighting to tracking colors too
+                if not isSelected and self.plotState.selectedBar then
                     barColor[1] = barColor[1] * 0.5
                     barColor[2] = barColor[2] * 0.5
                     barColor[3] = barColor[3] * 0.5
+                elseif isHovered then
+                    -- Brighten hovered tracking bar by 30%
+                    barColor[1] = math.min(1.0, barColor[1] * 1.3)
+                    barColor[2] = math.min(1.0, barColor[2] * 1.3)
+                    barColor[3] = math.min(1.0, barColor[3] * 1.3)
                 end
             end
             
@@ -528,12 +606,19 @@ end
 
 -- Main render function
 function MetricsPlot:Render()
-    if not self.isVisible or self.isPaused then
-        print("Plot not rendering - visible:", self.isVisible, "paused:", self.isPaused)
+    if not self.isVisible then
         return
     end
     
-    -- Remove debug spam
+    -- DEBUG: Show state every render (throttled)
+    if math.floor(GetTime() * 4) % 16 == 0 then  -- Every 4 seconds
+        print(string.format("[STORMY DEBUG] RENDER STATE: isPaused=%s, snapshotValid=%s, hoveredBar=%s, selectedBar=%s", 
+              tostring(self.plotState.isPaused), 
+              tostring(self.plotState.snapshot and self.plotState.snapshot.isValid),
+              tostring(self.plotState.hoveredBar),
+              tostring(self.plotState.selectedBar)))
+    end
+    
     
     -- Clear previous textures
     self:ReturnTextures()
@@ -541,15 +626,39 @@ function MetricsPlot:Render()
     -- Draw grid
     self:DrawGrid()
     
-    -- Skip HPS for now - focusing on DPS first
+    -- Simple render logic: paused = snapshot data, live = current data
+    local dpsData, hpsData
+    if self.plotState.isPaused and self.plotState.snapshot.isValid then
+        -- PAUSED: Render static snapshot - no animation
+        dpsData = self.plotState.snapshot.dpsPoints
+        hpsData = self.plotState.snapshot.hpsPoints
+        
+        -- DEBUG: Confirm using snapshot data
+        if math.floor(GetTime() * 2) % 8 == 0 then  -- Every 4 seconds
+            print(string.format("[STORMY DEBUG] PAUSED RENDER: Using snapshot with %d DPS points (live has %d)", 
+                  #dpsData, #self.dpsPoints))
+            if #dpsData > 0 then
+                print(string.format("[STORMY DEBUG] First snapshot point: time=%.1f, value=%.0f", 
+                      dpsData[1].time, dpsData[1].value))
+            end
+        end
+    else
+        -- LIVE: Render current data - bars animate
+        dpsData = self.dpsPoints
+        hpsData = self.hpsPoints
+        
+        -- DEBUG: Confirm using live data
+        if math.floor(GetTime() * 2) % 8 == 0 then  -- Every 4 seconds
+            print(string.format("[STORMY DEBUG] LIVE RENDER: Using live with %d DPS points", #dpsData))
+        end
+    end
     
-    -- Draw bars based on plot type
-    if self.plotType == "DPS" and #self.dpsPoints > 0 then
+    if self.plotType == "DPS" and #dpsData > 0 then
         local redColor = {1, 0, 0, 1}
-        self:DrawBars(self.dpsPoints, redColor, 5)
-    elseif self.plotType == "HPS" and #self.hpsPoints > 0 then
+        self:DrawBars(dpsData, redColor, 5)
+    elseif self.plotType == "HPS" and #hpsData > 0 then
         local greenColor = {0.2, 1, 0.2, 1}
-        self:DrawBars(self.hpsPoints, greenColor, 5)
+        self:DrawBars(hpsData, greenColor, 5)
     end
 end
 
@@ -631,6 +740,74 @@ function MetricsPlot:Debug()
 end
 
 -- =============================================================================
+-- SNAPSHOT MANAGEMENT
+-- =============================================================================
+
+-- Create snapshot of current data for paused viewing
+function MetricsPlot:CreateSnapshot()
+    local snapshot = self.plotState.snapshot
+    
+    -- Capture timestamp when snapshot was taken (use TimingManager's relative time)
+    snapshot.timestamp = addon.TimingManager:GetCurrentRelativeTime()
+    
+    -- DEBUG: Show what timestamp format we're capturing
+    print(string.format("[STORMY DEBUG] Snapshot timestamp: %.2f (GetTime: %.2f)", 
+          snapshot.timestamp, GetTime()))
+    
+    -- Deep copy current data points
+    snapshot.dpsPoints = {}
+    for i, point in ipairs(self.dpsPoints) do
+        snapshot.dpsPoints[i] = {
+            time = point.time,
+            value = point.value,
+            critRate = point.critRate or 0,
+            critDamage = point.critDamage or 0,
+            totalHits = point.totalHits or 0,
+            totalCrits = point.totalCrits or 0
+        }
+    end
+    
+    snapshot.hpsPoints = {}
+    for i, point in ipairs(self.hpsPoints) do
+        snapshot.hpsPoints[i] = {
+            time = point.time,
+            value = point.value,
+            critRate = point.critRate or 0,
+            critDamage = point.critDamage or 0,
+            totalHits = point.totalHits or 0,
+            totalCrits = point.totalCrits or 0
+        }
+    end
+    
+    -- Capture current scale values
+    snapshot.maxDPS = self.maxDPS
+    snapshot.maxHPS = self.maxHPS
+    
+    -- Mark snapshot as valid
+    snapshot.isValid = true
+    
+    print(string.format("[STORMY DEBUG] Created snapshot: %d DPS points, %d HPS points at time %.2f", 
+          #snapshot.dpsPoints, #snapshot.hpsPoints, snapshot.timestamp))
+    
+    -- DEBUG: Show first few points to verify data
+    if #snapshot.dpsPoints > 0 then
+        for i = 1, math.min(3, #snapshot.dpsPoints) do
+            local point = snapshot.dpsPoints[i]
+            print(string.format("[STORMY DEBUG] Snapshot point %d: time=%.1f, value=%.0f", i, point.time, point.value))
+        end
+    end
+end
+
+-- Invalidate snapshot (mark as invalid to avoid garbage collection)
+function MetricsPlot:InvalidateSnapshot()
+    self.plotState.snapshot.isValid = false
+    self.plotState.snapshot.timestamp = nil
+    -- Don't clear arrays to avoid garbage collection - just mark invalid
+    
+    print("[STORMY DEBUG] Snapshot invalidated")
+end
+
+-- =============================================================================
 -- UPDATE LOOP
 -- =============================================================================
 
@@ -645,8 +822,10 @@ function MetricsPlot:OnUpdate()
     
     self.lastUpdate = now
     
-    -- Update data and render
+    -- Always update live data (even when paused - we continue collecting)
     self:UpdateData()
+    
+    -- Always render (shows snapshot when paused, live data when not)
     self:Render()
 end
 
@@ -696,9 +875,32 @@ function MetricsPlot:CreateWindow()
     bg:SetAllPoints()
     bg:SetColorTexture(self.config.backgroundColor[1], self.config.backgroundColor[2], self.config.backgroundColor[3], self.config.backgroundColor[4])
     
-    -- Plot area frame
+    -- Create title bar for dragging (small area at top)
+    local titleBar = CreateFrame("Frame", nil, self.frame)
+    titleBar:SetPoint("TOPLEFT", self.frame, "TOPLEFT", 0, 0)
+    titleBar:SetPoint("TOPRIGHT", self.frame, "TOPRIGHT", 0, 0)
+    titleBar:SetHeight(15)  -- Small 15px title bar
+    titleBar:EnableMouse(true)
+    titleBar:RegisterForDrag("LeftButton")
+    titleBar:SetScript("OnDragStart", function() self.frame:StartMoving() end)
+    titleBar:SetScript("OnDragStop", function() self.frame:StopMovingOrSizing() end)
+    
+    -- Visual indicator for title bar (subtle)
+    local titleBg = titleBar:CreateTexture(nil, "BACKGROUND")
+    titleBg:SetAllPoints()
+    titleBg:SetColorTexture(0.2, 0.2, 0.2, 0.5)  -- Darker background
+    
+    -- Title text
+    local titleText = titleBar:CreateFontString(nil, "OVERLAY")
+    titleText:SetFont("Fonts\\FRIZQT__.TTF", 10, "OUTLINE")
+    titleText:SetPoint("CENTER", titleBar, "CENTER", 0, 0)
+    titleText:SetTextColor(0.7, 0.7, 0.7, 1)
+    titleText:SetText(self.plotType or "PLOT")
+    
+    -- Plot area frame (positioned below title bar)
     self.plotFrame = CreateFrame("Frame", nil, self.frame)
-    self.plotFrame:SetAllPoints()
+    self.plotFrame:SetPoint("TOPLEFT", titleBar, "BOTTOMLEFT", 0, 0)
+    self.plotFrame:SetPoint("BOTTOMRIGHT", self.frame, "BOTTOMRIGHT", 0, 0)
     
     -- Create tooltip
     self:CreateTooltip()
@@ -706,12 +908,11 @@ function MetricsPlot:CreateWindow()
     -- Create detail popup frame
     self:CreateDetailFrame()
     
-    -- Make main frame draggable
+    -- Create pause overlay
+    -- Pause overlay creation disabled for cleaner UI
+    
+    -- Make main frame movable (dragging handled by title bar)
     self.frame:SetMovable(true)
-    self.frame:EnableMouse(true)
-    self.frame:RegisterForDrag("LeftButton")
-    self.frame:SetScript("OnDragStart", function() self.frame:StartMoving() end)
-    self.frame:SetScript("OnDragStop", function() self.frame:StopMovingOrSizing() end)
     
     -- Add mouse interaction to plot frame
     self.plotFrame:EnableMouse(true)
@@ -851,13 +1052,27 @@ function MetricsPlot:CreateDetailFrame()
     self.detailFrame:Hide()
 end
 
+-- Create pause overlay
+function MetricsPlot:CreatePauseOverlay()
+    -- Pause overlay creation disabled for cleaner UI
+    -- No overlay, text, or resume button created
+end
+
 -- Convert screen coordinates to data time
 function MetricsPlot:ScreenToDataTime(screenX)
     local plotWidth = self.config.width - 60
     local relativeX = screenX - 50  -- Account for left margin
     
-    -- Convert to time
-    local now = addon.TimingManager and addon.TimingManager:GetCurrentRelativeTime() or GetTime()
+    -- Convert to time - use same logic as DataToScreen for consistency
+    local now
+    if self.plotState.isPaused and self.plotState.snapshot.isValid then
+        -- PAUSED: Use frozen snapshot timestamp directly - matches DataToScreen
+        now = self.plotState.snapshot.timestamp
+    else
+        -- LIVE: Use current time - matches DataToScreen
+        now = addon.TimingManager and addon.TimingManager:GetCurrentRelativeTime() or GetTime()
+    end
+    
     local timeRange = self.config.timeWindow
     local normalizedX = relativeX / plotWidth
     local time = (now - timeRange) + (normalizedX * timeRange)
@@ -869,8 +1084,13 @@ end
 function MetricsPlot:FindBarAtTime(timestamp)
     local flooredTime = math.floor(timestamp)
     
-    -- Search in the appropriate points array
-    local points = self.plotType == "DPS" and self.dpsPoints or self.hpsPoints
+    -- Search in the appropriate points array - use snapshot if paused and valid
+    local points
+    if self.plotState.isPaused and self.plotState.snapshot.isValid then
+        points = self.plotType == "DPS" and self.plotState.snapshot.dpsPoints or self.plotState.snapshot.hpsPoints
+    else
+        points = self.plotType == "DPS" and self.dpsPoints or self.hpsPoints
+    end
     
     for _, point in ipairs(points) do
         if math.floor(point.time) == flooredTime then
@@ -899,11 +1119,11 @@ function MetricsPlot:HandlePlotClick(cursorX, cursorY)
     
     -- Check if click is within plot area
     local plotWidth = self.config.width - 60
-    local plotHeight = self.config.height - 10
+    local plotHeight = self.config.height - 25  -- Account for title bar (15px) + margins (10px)
     
     if relativeX < 50 or relativeX > (50 + plotWidth) or relativeY < 5 or relativeY > (plotHeight - 5) then
         -- Click outside plot area - resume if paused
-        if self.plotState.mode == "PAUSED" then
+        if self.plotState.isPaused then
             self:Resume()
         end
         return
@@ -914,8 +1134,14 @@ function MetricsPlot:HandlePlotClick(cursorX, cursorY)
     local bar = self:FindBarAtTime(timestamp)
     
     if bar then
-        -- Auto-pause and select
-        self:Pause(math.floor(timestamp))
+        if self.plotState.isPaused then
+            -- Already paused - just change selection without re-snapshotting
+            self.plotState.selectedBar = math.floor(timestamp)
+            print(string.format("[STORMY DEBUG] Changed selection to %d (no re-snapshot)", self.plotState.selectedBar))
+        else
+            -- Not paused - pause and select
+            self:Pause(math.floor(timestamp))
+        end
         -- Show detailed breakdown
         self:ShowDetailFrame(math.floor(timestamp), frameX, frameY)
     end
@@ -937,7 +1163,14 @@ function MetricsPlot:OnPlotLeave()
     if self.tooltip then
         self.tooltip:Hide()
     end
-    self.plotState.hoveredTimestamp = nil
+    
+    -- In paused mode, be less aggressive about clearing hover state
+    if not self.plotState.isPaused then
+        self.plotState.hoveredBar = nil
+        -- Trigger render to remove hover highlighting
+        self:Render()
+    end
+    -- In paused mode, keep hover state but just hide tooltip
 end
 
 -- Handle mouse movement over plot
@@ -964,15 +1197,29 @@ function MetricsPlot:OnPlotMouseMove()
     local flooredTime = math.floor(timestamp)
     
     -- Only update if we moved to a different second
-    if flooredTime ~= self.plotState.hoveredTimestamp then
-        self.plotState.hoveredTimestamp = flooredTime
+    if flooredTime ~= self.plotState.hoveredBar then
+        self.plotState.hoveredBar = flooredTime
+        
+        -- DEBUG: Show hover state changes (always show for debugging)
+        print(string.format("[STORMY DEBUG] Hover changed to: %d (paused: %s, screenX: %.1f)", 
+              flooredTime, tostring(self.plotState.isPaused), relativeX))
         
         local bar = self:FindBarAtTime(timestamp)
+        
+        -- DEBUG: Show if bar was found (always show for debugging)
+        if bar then
+            print(string.format("[STORMY DEBUG] Found hover bar: time=%.1f, value=%.0f", bar.time, bar.value))
+        else
+            print(string.format("[STORMY DEBUG] No bar found for hover timestamp: %.1f (floored: %d)", timestamp, flooredTime))
+        end
         if bar then
             self:ShowBarTooltip(bar)
         else
             self:OnPlotLeave()
         end
+        
+        -- Trigger immediate render to show hover highlighting
+        self:Render()
     end
 end
 
@@ -980,7 +1227,8 @@ end
 function MetricsPlot:ShowBarTooltip(bar)
     if not self.tooltip or not bar then return end
     
-    self.tooltip:SetOwner(self.plotFrame, "ANCHOR_CURSOR")
+    -- Position tooltip to the right of the chart to avoid overlap
+    self.tooltip:SetOwner(self.plotFrame, "ANCHOR_RIGHT")
     self.tooltip:ClearLines()
     
     local now = addon.TimingManager and addon.TimingManager:GetCurrentRelativeTime() or GetTime()
@@ -1001,39 +1249,70 @@ end
 
 -- Pause the plot at a specific timestamp
 function MetricsPlot:Pause(timestamp)
-    self.plotState.mode = "PAUSED"
-    self.plotState.pausedAt = GetTime()
-    self.plotState.selectedTimestamp = timestamp
+    -- Set pause state and selected bar
+    self.plotState.isPaused = true
+    self.plotState.selectedBar = timestamp
     
-    -- Show pause overlay (will be implemented later)
+    -- Create snapshot of current data for user to interact with
+    self:CreateSnapshot()
+    
+    -- DEBUG: Confirm pause state set
+    print(string.format("[STORMY DEBUG] PAUSE SET: isPaused=%s, snapshotValid=%s, selectedBar=%s", 
+          tostring(self.plotState.isPaused), 
+          tostring(self.plotState.snapshot.isValid),
+          tostring(self.plotState.selectedBar)))
+    
+    -- Note: Removed pause overlay UI elements per user request
     print(string.format("Plot paused at timestamp %d", timestamp))
 end
 
 -- Resume live mode
 function MetricsPlot:Resume()
-    self.plotState.mode = "LIVE"
-    self.plotState.pausedAt = nil
-    self.plotState.selectedTimestamp = nil
+    -- Clear pause state
+    self.plotState.isPaused = false
+    self.plotState.selectedBar = nil
+    self.plotState.hoveredBar = nil
     
-    -- Hide detail frame and pause overlay
+    -- Invalidate snapshot so user sees live data
+    self:InvalidateSnapshot()
+    
+    -- Hide detail frame
     self:HideDetailFrame()
     print("Plot resumed to live mode")
 end
+
+-- Pause overlay functions removed - cleaner UI per user request
 
 -- Show detail popup frame
 function MetricsPlot:ShowDetailFrame(timestamp, x, y)
     if not self.detailFrame then return end
     
-    -- Position near clicked bar but ensure it's on screen
-    local left = math.max(50, math.min(x + 20, UIParent:GetWidth() - 320))
-    local bottom = math.max(50, math.min(y + 20, UIParent:GetHeight() - 220))
+    -- Clear existing positioning
+    self.detailFrame:ClearAllPoints()
     
-    self.detailFrame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left, bottom)
+    -- Position detail window above the chart, centered horizontally
+    local chartLeft = self.plotFrame:GetLeft() or 0
+    local chartTop = self.plotFrame:GetTop() or 0
+    local chartWidth = self.plotFrame:GetWidth() or 380
+    
+    -- Center above the chart with some vertical margin
+    local detailWidth = 320  -- Approximate detail window width
+    local left = chartLeft + (chartWidth - detailWidth) / 2
+    local top = chartTop + 20  -- 20px above the chart
+    
+    -- Ensure it stays on screen
+    left = math.max(20, math.min(left, UIParent:GetWidth() - detailWidth - 20))
+    top = math.min(top, UIParent:GetHeight() - 200)  -- Leave room for detail window height
+    
+    self.detailFrame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left, top)
     
     -- Get detailed data for this timestamp
     local summary, events = self:GetSecondDetails(timestamp)
     
     if summary then
+        print(string.format("[STORMY DEBUG] Summary found - totalDamage: %d, eventCount: %d, spells: %d", 
+            summary.totalDamage or 0, summary.eventCount or 0, 
+            summary.spells and self:CountTableEntries(summary.spells) or 0))
         self:PopulateDetailContent(timestamp, summary, events)
         self.detailFrame:Show()
     else
@@ -1070,10 +1349,26 @@ end
 function MetricsPlot:PopulateDetailContent(timestamp, summary, events)
     if not self.detailContent then return end
     
-    -- Clear existing content
+    -- Clear existing content properly
     for i, child in ipairs({self.detailContent:GetChildren()}) do
         child:Hide()
+        child:ClearAllPoints()
+        if child.SetParent then
+            child:SetParent(nil)
+        end
     end
+    
+    -- Also clear any existing FontStrings created by CreateDetailLine
+    if self.detailContent.createdLines then
+        for _, line in ipairs(self.detailContent.createdLines) do
+            line:Hide()
+            line:ClearAllPoints()
+            if line.SetParent then
+                line:SetParent(nil)
+            end
+        end
+    end
+    self.detailContent.createdLines = {}
     
     local yOffset = -10
     local lineHeight = 16
@@ -1122,12 +1417,18 @@ function MetricsPlot:PopulateDetailContent(timestamp, summary, events)
     end
     table.sort(spells, function(a, b) return a.data.total > b.data.total end)
     
+    -- Debug: Log spell count
+    print(string.format("[STORMY DEBUG] Found %d spells in summary for timestamp %d", #spells, timestamp))
+    
     -- Show top 8 spells
     for i = 1, math.min(8, #spells) do
         local spell = spells[i]
         local name = addon.SpellCache:GetSpellName(spell.id)
         local percent = (spell.data.total / summary.totalDamage) * 100
         local critRate = spell.data.crits > 0 and (spell.data.crits / spell.data.count) * 100 or 0
+        
+        -- Debug: Log spell details
+        print(string.format("[STORMY DEBUG] Spell %d: ID=%s, Name=%s, Total=%d", i, tostring(spell.id), tostring(name), spell.data.total))
         
         local spellText = string.format("%s: %s (%.0f%%) - %d hits", 
             name, 
@@ -1187,7 +1488,23 @@ function MetricsPlot:CreateDetailLine(text, fontSize, color)
     line:SetJustifyH("LEFT")
     line:SetWordWrap(true)
     line:SetWidth(240)  -- Account for scrollbar
+    
+    -- Track created lines for cleanup
+    if not self.detailContent.createdLines then
+        self.detailContent.createdLines = {}
+    end
+    table.insert(self.detailContent.createdLines, line)
+    
     return line
+end
+
+-- Helper function to count table entries
+function MetricsPlot:CountTableEntries(t)
+    local count = 0
+    for _ in pairs(t) do
+        count = count + 1
+    end
+    return count
 end
 
 -- Group events by entity (player vs pets)

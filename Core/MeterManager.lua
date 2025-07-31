@@ -121,7 +121,7 @@ function MeterManager:RouteDamageEvent(timestamp, sourceGUID, amount, isPlayer, 
 end
 
 -- Route healing events to appropriate accumulators
-function MeterManager:RouteHealingEvent(timestamp, sourceGUID, amount, absorbAmount, isPlayer, isPet, isCritical, overhealing)
+function MeterManager:RouteHealingEvent(timestamp, sourceGUID, amount, absorbAmount, isPlayer, isPet, isCritical, overhealing, spellId, sourceName, sourceType)
     -- Route to healing-based meters
     if registeredAccumulators.Healing then
         local extraData = {
@@ -129,12 +129,24 @@ function MeterManager:RouteHealingEvent(timestamp, sourceGUID, amount, absorbAmo
             overhealing = overhealing or 0
         }
         registeredAccumulators.Healing:AddEvent(timestamp, sourceGUID, amount, isPlayer, isPet, isCritical, extraData)
+        
+        -- Also add to detailed event tracking
+        if registeredAccumulators.Healing.AddDetailedEvent then
+            registeredAccumulators.Healing:AddDetailedEvent(timestamp, amount, spellId, sourceGUID, 
+                                                          sourceName, sourceType, isCritical)
+        end
     end
     
     -- Allow other meters to process healing events if needed
     for meterType, accumulator in pairs(registeredAccumulators) do
         if meterType ~= "Healing" and accumulator.OnHealingEvent then
             accumulator:OnHealingEvent(timestamp, sourceGUID, amount, absorbAmount, isPlayer, isPet, isCritical, overhealing)
+            
+            -- Also add detailed events to other accumulators if they support it
+            if accumulator.AddDetailedEvent then
+                accumulator:AddDetailedEvent(timestamp, amount, spellId, sourceGUID, 
+                                           sourceName, sourceType, isCritical)
+            end
         end
     end
 end

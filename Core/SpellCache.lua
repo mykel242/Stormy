@@ -53,8 +53,21 @@ function SpellCache:GetSpellInfo(spellId)
         return info.name, info.icon, info.school
     end
     
-    -- Lazy load from API
-    local name, _, icon, _, _, _, _, _, school = GetSpellInfo(spellId)
+    -- Lazy load from API - handle both old and new API
+    local name, icon, school
+    if C_Spell and C_Spell.GetSpellInfo then
+        -- Modern WoW API (10.x+)
+        local spellInfo = C_Spell.GetSpellInfo(spellId)
+        if spellInfo then
+            name = spellInfo.name
+            icon = spellInfo.iconID
+            school = spellInfo.school
+        end
+    else
+        -- Legacy API
+        name, _, icon, _, _, _, _, _, school = GetSpellInfo(spellId)
+    end
+    
     if name then
         -- Store in cache
         cache.spells[spellId] = {
@@ -65,6 +78,11 @@ function SpellCache:GetSpellInfo(spellId)
         cache.spellAccessTime[spellId] = GetTime()
         cache.spellCount = cache.spellCount + 1
         
+        -- Debug: Log successful spell lookups occasionally
+        if math.random() < 0.02 then  -- 2% chance
+            print(string.format("[STORMY DEBUG] Spell cached: ID=%s, Name=%s", tostring(spellId), tostring(name)))
+        end
+        
         -- Cleanup if needed
         if cache.spellCount > CACHE_CONFIG.MAX_SPELLS * CACHE_CONFIG.CLEANUP_THRESHOLD then
             self:CleanupSpellCache()
@@ -73,12 +91,19 @@ function SpellCache:GetSpellInfo(spellId)
         return name, icon, school
     end
     
+    -- Debug: Log failed spell lookups
+    print(string.format("[STORMY DEBUG] Failed to get spell info for ID: %s", tostring(spellId)))
+    
     return "Unknown Spell #" .. spellId
 end
 
 -- Get just the spell name (most common use case)
 function SpellCache:GetSpellName(spellId)
     local name = self:GetSpellInfo(spellId)
+    -- Debug: Log spell name lookups occasionally
+    if math.random() < 0.1 then  -- 10% chance to log
+        print(string.format("[STORMY DEBUG] SpellCache lookup: ID=%s, Name=%s", tostring(spellId), tostring(name)))
+    end
     return name
 end
 
