@@ -69,12 +69,11 @@ function PlotStateManager:PauseAll(timestamp, initiatingPlotType)
             plot.plotState.isPaused = true
             plot.plotState.selectedBar = timestamp
             
-            print(string.format("[PlotStateManager] Paused %s plot", plotType))
+            -- Plot paused
         end
     end
     
-    print(string.format("[PlotStateManager] All plots paused at timestamp %d by %s", 
-          timestamp, initiatingPlotType or "unknown"))
+    -- All plots paused
 end
 
 function PlotStateManager:ResumeAll(initiatingPlotType)
@@ -97,7 +96,7 @@ function PlotStateManager:ResumeAll(initiatingPlotType)
                 plot:InvalidateSnapshot()
             end
             
-            print(string.format("[PlotStateManager] Resumed %s plot", plotType))
+            -- Plot resumed
         end
     end
     
@@ -107,8 +106,7 @@ function PlotStateManager:ResumeAll(initiatingPlotType)
         detailWindow:Hide()
     end
     
-    print(string.format("[PlotStateManager] All plots resumed by %s", 
-          initiatingPlotType or "unknown"))
+    -- All plots resumed
 end
 
 -- =============================================================================

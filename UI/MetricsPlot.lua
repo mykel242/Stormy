@@ -1173,7 +1173,7 @@ function MetricsPlot:Pause(timestamp)
     -- Use PlotStateManager to pause all plots synchronously
     addon.PlotStateManager:PauseAll(timestamp, self.plotType)
     
-    print(string.format("Plot paused at timestamp %d", timestamp))
+    -- Plot paused
 end
 
 -- Resume live mode
@@ -1181,7 +1181,7 @@ function MetricsPlot:Resume()
     -- Use PlotStateManager to resume all plots synchronously
     addon.PlotStateManager:ResumeAll(self.plotType)
     
-    print("Plot resumed to live mode")
+    -- Plot resumed
 end
 
 -- Pause overlay functions removed - cleaner UI per user request
