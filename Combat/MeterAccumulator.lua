@@ -255,10 +255,14 @@ function MeterAccumulator:AddDetailedEvent(timestamp, amount, spellId, sourceGUI
     if buffer.count < buffer.size then
         buffer.count = buffer.count + 1
     else
-        -- Overwriting old data
+        -- Overwriting old data - clean up BEFORE moving tail
+        local oldEvent = buffer.buffer[buffer.tail]
+        if oldEvent and oldEvent.timestamp then
+            self:CleanupOldTimeIndex(oldEvent.timestamp)
+        end
+        
+        -- Now advance tail
         buffer.tail = buffer.tail % buffer.size + 1
-        -- Clean up old time index entry
-        self:CleanupOldTimeIndex(buffer.buffer[buffer.tail].timestamp)
     end
 end
 
@@ -313,7 +317,12 @@ function MeterAccumulator:CleanupOldTimeIndex(timestamp)
     if not timestamp then return end
     
     local flooredTime = math.floor(timestamp)
-    self.rollingData.detailBuffer.timeIndex[flooredTime] = nil
+    local timeEntry = self.rollingData.detailBuffer.timeIndex[flooredTime]
+    
+    -- Clear the time index entry
+    if timeEntry then
+        self.rollingData.detailBuffer.timeIndex[flooredTime] = nil
+    end
     
     -- Also clean up second summary
     local summary = self.rollingData.secondSummaries[flooredTime]
@@ -515,12 +524,12 @@ function MeterAccumulator:CleanOldData()
         end
     end
     
-    -- Clean second summaries older than detail retention time
-    -- But preserve data that might be viewed by paused plots
-    local detailCutoff = now - addon.Constants.DETAIL_BUFFER.RETENTION_TIME
+    -- Clean second summaries more aggressively
+    local summaryRetention = 120  -- Keep only 2 minutes of summaries
+    local summaryCutoff = now - summaryRetention
     
     -- Check if any plots are paused and extend retention accordingly
-    local minPausedTime = detailCutoff
+    local minPausedTime = summaryCutoff
     
     -- Check both DPS and HPS plots if they exist
     for _, plotKey in ipairs({"DPSPlot", "HPSPlot"}) do
@@ -531,15 +540,44 @@ function MeterAccumulator:CleanOldData()
                 local pausedRelativeTime = addon.TimingManager and addon.TimingManager:GetRelativeTime(pausedAt) or pausedAt
                 local plotWindowStart = pausedRelativeTime - (plot.config and plot.config.timeWindow or 60)
                 minPausedTime = math.min(minPausedTime, plotWindowStart - 30) -- Extra 30s buffer
-                -- Extending retention to preserve data for paused plot
             end
         end
     end
     
+    -- Count summaries before cleanup
+    local summaryCount = 0
+    local cleanedSummaries = 0
+    
     for timestamp, summary in pairs(self.rollingData.secondSummaries) do
+        summaryCount = summaryCount + 1
         if timestamp < minPausedTime then
             addon.TablePool:ReleaseSummary(summary)
             self.rollingData.secondSummaries[timestamp] = nil
+            cleanedSummaries = cleanedSummaries + 1
+            cleaned = cleaned + 1
+        end
+    end
+    
+    -- If we have too many summaries, force more aggressive cleanup
+    if summaryCount - cleanedSummaries > 180 then  -- More than 3 minutes worth
+        local summaryList = {}
+        for timestamp in pairs(self.rollingData.secondSummaries) do
+            if timestamp < minPausedTime then  -- Only consider cleanable entries
+                table.insert(summaryList, timestamp)
+            end
+        end
+        
+        -- Sort and clean oldest entries
+        table.sort(summaryList)
+        local toClean = (summaryCount - cleanedSummaries) - 120  -- Keep only 2 minutes
+        for i = 1, math.min(toClean, #summaryList) do
+            local timestamp = summaryList[i]
+            local summary = self.rollingData.secondSummaries[timestamp]
+            if summary then
+                addon.TablePool:ReleaseSummary(summary)
+                self.rollingData.secondSummaries[timestamp] = nil
+                cleaned = cleaned + 1
+            end
         end
     end
     

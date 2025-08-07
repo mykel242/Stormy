@@ -305,16 +305,37 @@ function EventProcessor:ProcessDamageEvent(timestamp, sourceGUID, destGUID, spel
                                            spellId, sourceName, sourceType)
     end
     
-    -- Dispatch event via event bus (creates minimal event object)
-    addon.EventBus:DispatchDamage({
-        sourceGUID = sourceGUID,
-        amount = amount,
-        spellId = spellId,
-        critical = critical,
-        isPlayer = isPlayer,
-        isPet = isPet,
-        timestamp = relativeTime
-    })
+    -- Get pooled event object (zero allocation)
+    if addon.EventPool then
+        local event = addon.EventPool:GetDamageEvent()
+        if event then
+            -- Populate event data
+            event.sourceGUID = sourceGUID
+            event.amount = amount
+            event.spellId = spellId or 0
+            event.critical = critical or false
+            event.isPlayer = isPlayer
+            event.isPet = isPet
+            event.timestamp = relativeTime
+            
+            -- Dispatch using pooled event
+            addon.EventBus:DispatchDamage(event)
+            
+            -- Event will be released by EventBus after processing
+        end
+        -- If pool is exhausted, we simply skip the event dispatch
+    else
+        -- Fallback to old method if EventPool not available
+        addon.EventBus:DispatchDamage({
+            sourceGUID = sourceGUID,
+            amount = amount,
+            spellId = spellId,
+            critical = critical,
+            isPlayer = isPlayer,
+            isPet = isPet,
+            timestamp = relativeTime
+        })
+    end
 end
 
 -- Process healing event (zero allocation)
@@ -352,19 +373,43 @@ function EventProcessor:ProcessHealingEvent(timestamp, sourceGUID, destGUID, spe
         )
     end
     
-    -- Dispatch event via event bus
-    addon.EventBus:DispatchHealing({
-        sourceGUID = sourceGUID,
-        amount = amount,
-        spellId = spellId,
-        critical = critical,
-        isPlayer = isPlayer,
-        isPet = isPet,
-        timestamp = relativeTime,
-        overhealing = overhealing or 0,
-        absorbed = absorbed or 0,
-        isHOT = isHOT
-    })
+    -- Get pooled event object (zero allocation)
+    if addon.EventPool then
+        local event = addon.EventPool:GetHealingEvent()
+        if event then
+            -- Populate event data
+            event.sourceGUID = sourceGUID
+            event.amount = amount
+            event.spellId = spellId or 0
+            event.critical = critical or false
+            event.isPlayer = isPlayer
+            event.isPet = isPet
+            event.timestamp = relativeTime
+            event.overhealing = overhealing or 0
+            event.absorbed = absorbed or 0
+            event.isHOT = isHOT
+            
+            -- Dispatch using pooled event
+            addon.EventBus:DispatchHealing(event)
+            
+            -- Event will be released by EventBus after processing
+        end
+        -- If pool is exhausted, we simply skip the event dispatch
+    else
+        -- Fallback to old method if EventPool not available
+        addon.EventBus:DispatchHealing({
+            sourceGUID = sourceGUID,
+            amount = amount,
+            spellId = spellId,
+            critical = critical,
+            isPlayer = isPlayer,
+            isPet = isPet,
+            timestamp = relativeTime,
+            overhealing = overhealing or 0,
+            absorbed = absorbed or 0,
+            isHOT = isHOT
+        })
+    end
 end
 
 
@@ -393,12 +438,25 @@ function EventProcessor:AddPet(petGUID, petName)
     if petGUID and petGUID ~= "" then
         playerCache.pets[petGUID] = true
         
-        -- Dispatch pet detected event
-        addon.EventBus:DispatchPetDetected({
-            guid = petGUID,
-            name = petName,
-            timestamp = GetTime()
-        })
+        -- Dispatch pet detected event (use combat event pool for rare events)
+        if addon.EventPool then
+            local event = addon.EventPool:GetCombatEvent()
+            if event then
+                event.state = "PET_DETECTED"
+                event.timestamp = GetTime()
+                event.duration = 0  -- Not used for pet detection
+                -- Store pet info in state field as "guid|name"
+                event.state = petGUID .. "|" .. (petName or "Unknown")
+                addon.EventBus:DispatchPetDetected(event)
+            end
+        else
+            -- Fallback to creating table
+            addon.EventBus:DispatchPetDetected({
+                guid = petGUID,
+                name = petName,
+                timestamp = GetTime()
+            })
+        end
         
         -- print(string.format("[STORMY] Pet detected: %s (%s)", petName or "Unknown", petGUID))
     end
