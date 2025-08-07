@@ -83,22 +83,54 @@ function EventBus:Dispatch(eventType, eventData)
     
     local subscribers = eventBusState.subscribers[eventType]
     if not subscribers or #subscribers == 0 then
+        -- If no subscribers and we have a pooled event, release it
+        if eventData and addon.EventPool then
+            self:ReleasePooledEvent(eventType, eventData)
+        end
         return
     end
     
-    -- Create event object
-    local event = {
-        type = eventType,
-        data = eventData,
-        timestamp = GetTime()
-    }
+    -- Check if eventData is a pooled event (has all expected fields)
+    local isPooledEvent = false
+    if eventData and type(eventData) == "table" then
+        -- Check for common event fields that indicate a pooled event
+        if eventData.sourceGUID and eventData.amount and eventData.timestamp then
+            isPooledEvent = true
+        end
+    end
+    
+    -- Create event wrapper only if not using pooled event
+    local event
+    if isPooledEvent then
+        -- Use pooled event directly - just add type field temporarily
+        event = eventData
+        event._eventType = eventType  -- Store type temporarily
+    else
+        -- Create wrapper for non-pooled events (fallback/compatibility)
+        event = {
+            type = eventType,
+            data = eventData,
+            timestamp = GetTime()
+        }
+    end
     
     -- Dispatch to all subscribers
     for i = 1, #subscribers do
         local subscriber = subscribers[i]
         
+        -- For pooled events, create a minimal wrapper for the callback
+        local callbackEvent = event
+        if isPooledEvent then
+            -- Pass pooled event with type info
+            callbackEvent = {
+                type = eventType,
+                data = event,
+                timestamp = event.timestamp
+            }
+        end
+        
         -- Protected call to prevent one subscriber from breaking others
-        local success, err = pcall(subscriber.callback, event)
+        local success, err = pcall(subscriber.callback, callbackEvent)
         if not success then
             -- print(string.format("[STORMY EventBus Error] %s subscriber '%s': %s", 
             --     eventType, subscriber.name, tostring(err)))
@@ -107,8 +139,31 @@ function EventBus:Dispatch(eventType, eventData)
         end
     end
     
+    -- Clean up temporary type field if we added it
+    if isPooledEvent and event._eventType then
+        event._eventType = nil
+    end
+    
+    -- Release pooled event after all subscribers have processed it
+    if isPooledEvent and addon.EventPool then
+        self:ReleasePooledEvent(eventType, eventData)
+    end
+    
     eventBusState.totalEventsDispatched = eventBusState.totalEventsDispatched + 1
     eventBusState.lastEventTime = GetTime()
+end
+
+-- Release a pooled event back to the appropriate pool
+function EventBus:ReleasePooledEvent(eventType, event)
+    if not addon.EventPool or not event then return end
+    
+    if eventType == EVENT_TYPES.DAMAGE_DEALT then
+        addon.EventPool:ReleaseDamageEvent(event)
+    elseif eventType == EVENT_TYPES.HEALING_DONE then
+        addon.EventPool:ReleaseHealingEvent(event)
+    elseif eventType == EVENT_TYPES.COMBAT_START or eventType == EVENT_TYPES.COMBAT_END then
+        addon.EventPool:ReleaseCombatEvent(event)
+    end
 end
 
 -- =============================================================================

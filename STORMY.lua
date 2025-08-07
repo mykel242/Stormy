@@ -89,6 +89,21 @@ function addon:OnInitialize()
         -- print("[STORMY] TablePool initialized")
     end
     
+    if self.EventPool then
+        self.EventPool:Initialize()
+        -- print("[STORMY] EventPool initialized")
+    end
+    
+    if self.StringPool then
+        self.StringPool:Initialize()
+        -- print("[STORMY] StringPool initialized")
+    end
+    
+    if self.MemoryProfiler then
+        self.MemoryProfiler:Initialize()
+        -- print("[STORMY] MemoryProfiler initialized")
+    end
+    
     if self.SpellCache then
         self.SpellCache:Initialize()
         -- print("[STORMY] SpellCache initialized")
@@ -299,12 +314,17 @@ SLASH_STORMY1 = "/stormy"
 SlashCmdList["STORMY"] = function(msg)
     local command = string.lower(msg or "")
     
-    if command == "show" or command == "" then
-        if addon.DamageMeter then
-            addon.DamageMeter:Toggle()
-        else
-            -- print("[STORMY] Damage meter not available")
-        end
+    if command == "" then
+        -- Show help when no command given
+        print("STORMY Commands:")
+        print("  /stormy dps - Toggle DPS meter")
+        print("  /stormy hps - Toggle HPS meter")
+        print("  /stormy dpsplot - Toggle DPS plot")
+        print("  /stormy hpsplot - Toggle HPS plot")
+        print("  /stormy debug - Show debug information")
+        print("  /stormy reset - Reset statistics")
+        print("  /stormy poolstats - Show pool statistics")
+        print("  /stormy version - Show version")
     elseif command == "debug" then
         print("=== STORMY Debug Information ===")
         print(string.format("Version: %s", addon.VERSION))
@@ -335,45 +355,13 @@ SlashCmdList["STORMY"] = function(msg)
         else
             print("[STORMY] DPS meter not available")
         end
-    elseif command == "dpsdebug" then
-        if addon.DamageAccumulator then
-            local stats = addon.DamageAccumulator:GetStats()
-            print("=== DPS Debug ===")
-            print(string.format("Current DPS: %.0f", stats.currentDPS))
-            print(string.format("Time since last event: %.1fs", stats.timeSinceLastEvent))
-            print(string.format("Activity level: %.1f%%", stats.activityLevel * 100))
-            print(string.format("5s window damage: %.0f", stats.current.damage))
-            print(string.format("5s window DPS: %.0f", stats.current.dps))
-            
-            -- Force window recalculation
-            addon.DamageAccumulator:UpdateCurrentValues()
-            local newStats = addon.DamageAccumulator:GetStats()
-            print(string.format("After recalc - Current DPS: %.0f", newStats.currentDPS))
-            
-            -- Check what UI gets
-            local displayData = addon.DamageAccumulator:GetDisplayData()
-            print(string.format("UI Display Data - Current DPS: %s", displayData.currentDPS))
-            
-            -- Force UI update
-            if addon.DamageMeter then
-                addon.DamageMeter:ForceUpdate()
-                print("Forced UI update")
-            end
-            
-            -- Circuit breaker stats
-            if addon.EventProcessor then
-                local cbStats = addon.EventProcessor:GetStats().circuitBreaker
-                print(string.format("Circuit breaker: Max %d/frame, Currently tripped: %s", 
-                    cbStats.maxEventsPerFrame, tostring(cbStats.tripped)))
-            end
-        end
     elseif command == "hps" then
         if addon.MeterManager then
             addon.MeterManager:ToggleMeter("Healing")
         else
             print("[STORMY] HPS meter not available")
         end
-    elseif command == "plot" or command == "dpsplot" then
+    elseif command == "dpsplot" then
         if addon.MeterManager then
             addon.MeterManager:ToggleMeter("DPSPlot")
         else
@@ -385,39 +373,22 @@ SlashCmdList["STORMY"] = function(msg)
         else
             print("[STORMY] HPS plot not available")
         end
-    elseif command == "plotdebug" then
-        if addon.DPSPlot then
-            print("=== DPS Plot Debug ===")
-            addon.DPSPlot:Debug()
+    elseif command == "poolstats" then
+        if addon.EventPool then
+            addon.EventPool:Debug()
         end
-        if addon.HPSPlot then
-            print("=== HPS Plot Debug ===")
-            addon.HPSPlot:Debug()
-        end
-    elseif command:match("^cb%s") then
-        -- Circuit breaker commands: /stormy cb auto|solo|raid|mythic|<number>
-        local mode = command:match("^cb%s+(.+)")
-        if addon.EventProcessor then
-            addon.EventProcessor:SetCircuitBreakerMode(mode)
-        end
-    elseif command == "events" then
-        if addon.EventProcessor then
-            addon.EventProcessor:ShowRecentEvents()
+        if addon.TablePool then
+            addon.TablePool:Debug()
         end
     else
         print("STORMY Commands:")
-        print("  /stormy - Toggle damage meter")
-        print("  /stormy show - Toggle damage meter")
         print("  /stormy dps - Toggle DPS meter")
         print("  /stormy hps - Toggle HPS meter")
-        print("  /stormy plot - Toggle DPS plot")
+        print("  /stormy dpsplot - Toggle DPS plot")
         print("  /stormy hpsplot - Toggle HPS plot")
-        print("  /stormy plotdebug - Debug plot data")
         print("  /stormy debug - Show debug information")
         print("  /stormy reset - Reset statistics")
-        print("  /stormy dpsdebug - Debug DPS calculations")
-        print("  /stormy cb <mode> - Circuit breaker: auto|solo|raid|mythic|<number>")
-        print("  /stormy events - Show recent event types")
+        print("  /stormy poolstats - Show pool statistics")
         print("  /stormy version - Show version")
     end
 end

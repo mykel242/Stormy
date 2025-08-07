@@ -200,11 +200,18 @@ function HealingMeter:CustomUpdateDisplay(currentValue, displayData)
     
     -- Update main number display
     if self.state.mainNumberText then
-        local whole, decimal = formatted:match("^(%d+)%.?(%d*)$")
-        if decimal and decimal ~= "" then
-            self.state.mainNumberText:SetText(whole .. "." .. decimal .. unit)
+        -- Use StringPool if available for zero-allocation formatting
+        if addon.StringPool then
+            local formattedText = addon.StringPool:GetFormattedNumber(formatted, unit)
+            self.state.mainNumberText:SetText(formattedText)
         else
-            self.state.mainNumberText:SetText(whole .. unit)
+            -- Fallback to string concatenation
+            local whole, decimal = formatted:match("^(%d+)%.?(%d*)$")
+            if decimal and decimal ~= "" then
+                self.state.mainNumberText:SetText(whole .. "." .. decimal .. unit)
+            else
+                self.state.mainNumberText:SetText(whole .. unit)
+            end
         end
     end
     
@@ -245,9 +252,19 @@ function HealingMeter:CustomUpdateDisplay(currentValue, displayData)
             self.state.lastScaleValue = newScaleText
             self.state.currentScaleMax = newScaleValue
             self.state.lastScaleUpdate = now
-            self.state.scaleText:SetText(newScaleText .. " scale")
+            -- Use StringPool for scale text
+            if addon.StringPool then
+                self.state.scaleText:SetText(addon.StringPool:GetScale(newScaleText))
+            else
+                self.state.scaleText:SetText(newScaleText .. " scale")
+            end
         else
-            self.state.scaleText:SetText(self.state.lastScaleValue .. " scale")
+            -- Use StringPool for scale text
+            if addon.StringPool then
+                self.state.scaleText:SetText(addon.StringPool:GetScale(self.state.lastScaleValue))
+            else
+                self.state.scaleText:SetText(self.state.lastScaleValue .. " scale")
+            end
         end
     end
     
