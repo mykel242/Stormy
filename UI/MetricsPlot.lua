@@ -46,7 +46,11 @@ local PLOT_CONFIG = {
     usePercentileScaling = true,    -- Use percentile-based scaling instead of max
     scalePercentile = 0.95,         -- Use 95th percentile for scaling (ignores top 5% outliers)
     outlierThreshold = 2.0,         -- Values >2x the scale are considered outliers
-    showOutlierIndicators = true    -- Show visual indicators for outlier bars
+    showOutlierIndicators = true,   -- Show visual indicators for outlier bars
+    
+    -- Data requirements
+    minDataForPercentile = 10,      -- Minimum data points before using percentile scaling
+    warmupPeriod = 5                -- Seconds before percentile scaling kicks in
 }
 
 -- =============================================================================
@@ -61,6 +65,10 @@ function MetricsPlot:New(plotType)
         
         -- State
         isVisible = false,
+        
+        -- Track outlier transitions
+        outlierTransitions = {},  -- Track which bars are transitioning to/from outlier state
+        previousOutliers = {},     -- Track previous frame's outliers for transition detection
         
         -- Single source of truth for plot state
         plotState = {
@@ -267,7 +275,12 @@ function MetricsPlot:UpdateScale()
     
     local targetMaxDPS, targetMaxHPS
     
-    if self.config.usePercentileScaling then
+    -- Check if we have enough data and time has passed for percentile scaling
+    local now = GetTime()
+    local uptime = now - addon.startTime
+    local usePercentile = self.config.usePercentileScaling
+    
+    if usePercentile then
         -- Use percentile-based scaling (outlier resistant)
         local dpsValues = {}
         local hpsValues = {}
@@ -285,9 +298,40 @@ function MetricsPlot:UpdateScale()
             end
         end
         
+        -- Check if we meet minimum data requirements
+        local hasEnoughData = (self.plotType == "DPS" and #dpsValues >= self.config.minDataForPercentile) or
+                             (self.plotType == "HPS" and #hpsValues >= self.config.minDataForPercentile)
+        local hasWarmedUp = uptime >= self.config.warmupPeriod
+        
+        -- Fall back to max scaling if not enough data
+        if not hasEnoughData or not hasWarmedUp then
+            usePercentile = false
+            -- Silently fall back to max scaling during warmup
+        end
+    end
+    
+    if usePercentile then
+        -- Continue with existing percentile calculation
+        local dpsValues = {}
+        local hpsValues = {}
+        
+        for _, point in ipairs(self.dpsPoints) do
+            if point.value > 0 then
+                table.insert(dpsValues, point.value)
+            end
+        end
+        
+        for _, point in ipairs(self.hpsPoints) do
+            if point.value > 0 then
+                table.insert(hpsValues, point.value)
+            end
+        end
+        
         -- Calculate percentile values
         local percentileDPS = self:CalculatePercentile(dpsValues, self.config.scalePercentile)
         local percentileHPS = self:CalculatePercentile(hpsValues, self.config.scalePercentile)
+        
+        -- Percentile calculation complete - no debug output needed
         
         -- Ensure minimum meaningful scale
         percentileDPS = math.max(percentileDPS, self.config.minScale)
@@ -442,12 +486,22 @@ function MetricsPlot:DataToScreen(time, value, baselineOffset)
     local normalizedTime = (time - (now - timeRange)) / timeRange
     local x = 50 + (normalizedTime * plotWidth)
     
-    -- Convert value to Y coordinate using appropriate scale
+    -- Convert value to Y coordinate using appropriate scale for this plot type
     local maxValue
     if self.plotState.isPaused and self.plotState.snapshot.isValid then
-        maxValue = math.max(self.plotState.snapshot.maxDPS or 0, self.plotState.snapshot.maxHPS or 0, self.config.minScale)
+        -- Use the appropriate scale for this plot type
+        if self.plotType == "DPS" then
+            maxValue = self.plotState.snapshot.maxDPS or self.config.minScale
+        else
+            maxValue = self.plotState.snapshot.maxHPS or self.config.minScale
+        end
     else
-        maxValue = math.max(self.maxDPS or 0, self.maxHPS or 0, self.config.minScale)
+        -- Use the appropriate scale for this plot type
+        if self.plotType == "DPS" then
+            maxValue = self.maxDPS or self.config.minScale
+        else
+            maxValue = self.maxHPS or self.config.minScale
+        end
     end
     
     local normalizedValue = maxValue > 0 and (value / maxValue) or 0
@@ -461,12 +515,20 @@ function MetricsPlot:DrawGrid()
     local plotWidth = self.config.width - 60
     local plotHeight = self.config.height - 25  -- Account for title bar (15px) + margins (10px)
     
-    -- Use appropriate scale: snapshot scale when paused, live scale when not
+    -- Use appropriate scale for this plot type
     local maxValue
     if self.plotState.isPaused and self.plotState.snapshot.isValid then
-        maxValue = math.max(self.plotState.snapshot.maxDPS or 0, self.plotState.snapshot.maxHPS or 0, self.config.minScale)
+        if self.plotType == "DPS" then
+            maxValue = self.plotState.snapshot.maxDPS or self.config.minScale
+        else
+            maxValue = self.plotState.snapshot.maxHPS or self.config.minScale
+        end
     else
-        maxValue = math.max(self.maxDPS or 0, self.maxHPS or 0, self.config.minScale)
+        if self.plotType == "DPS" then
+            maxValue = self.maxDPS or self.config.minScale
+        else
+            maxValue = self.maxHPS or self.config.minScale
+        end
     end
     
     -- Horizontal grid lines (subtle)
@@ -512,45 +574,39 @@ function MetricsPlot:DrawGrid()
     end
 end
 
--- Position value label above the highest bar
+-- Position scale label in a consistent location
 function MetricsPlot:PositionValueLabelAboveHighestBar(maxValue)
-    -- Find the highest bar in current data
-    local highestBar = nil
-    local highestValue = 0
+    -- Simply position the scale label in the top-right corner of the plot
+    -- This is cleaner and more consistent than trying to position above bars
+    local plotWidth = self.config.width - 60
+    local plotHeight = self.config.height - 25
     
-    -- Check which data to use based on state
-    local dpsData, hpsData
+    -- Check if we have any data to display
+    local hasData = false
     if self.plotState.isPaused and self.plotState.snapshot.isValid then
-        dpsData = self.plotState.snapshot.dpsPoints or {}
-        hpsData = self.plotState.snapshot.hpsPoints or {}
+        if self.plotType == "DPS" then
+            hasData = self.plotState.snapshot.dpsPoints and #self.plotState.snapshot.dpsPoints > 0
+        else
+            hasData = self.plotState.snapshot.hpsPoints and #self.plotState.snapshot.hpsPoints > 0
+        end
     else
-        dpsData = self.dpsPoints or {}
-        hpsData = self.hpsPoints or {}
-    end
-    
-    -- Find highest bar across both data sets
-    for _, point in ipairs(dpsData) do
-        if point.value > highestValue then
-            highestValue = point.value
-            highestBar = point
+        if self.plotType == "DPS" then
+            hasData = self.dpsPoints and #self.dpsPoints > 0
+        else
+            hasData = self.hpsPoints and #self.hpsPoints > 0
         end
     end
     
-    for _, point in ipairs(hpsData) do
-        if point.value > highestValue then
-            highestValue = point.value
-            highestBar = point
-        end
-    end
-    
-    if highestBar then
-        -- Position label above the highest bar and show it
-        local x, y = self:DataToScreen(highestBar.time, highestBar.value, 0)
+    if hasData and maxValue > 0 then
+        -- Position in top-right corner, slightly inset
+        local x = 50 + plotWidth - 40
+        local y = plotHeight - 10
+        
         self.maxLabel:ClearAllPoints()
-        self.maxLabel:SetPoint("BOTTOM", self.plotFrame, "BOTTOMLEFT", x, y + 5)
+        self.maxLabel:SetPoint("CENTER", self.plotFrame, "BOTTOMLEFT", x, y)
         self.maxLabel:Show()
     else
-        -- Hide label when no bars are rendered
+        -- Hide label when no data
         self.maxLabel:Hide()
     end
 end
@@ -584,8 +640,10 @@ end
 
 -- Check if a value is an outlier
 function MetricsPlot:IsOutlier(value, scaleValue)
+    -- Only consider values that significantly exceed the scale as outliers
+    -- Default threshold is 1.0 (values that exceed the scale itself)
     return self.config.showOutlierIndicators and 
-           value > (scaleValue * self.config.outlierThreshold)
+           value > scaleValue  -- Simplified: outliers are values that exceed the scale
 end
 
 -- Draw bars for each data point instead of continuous lines
@@ -598,21 +656,57 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
     local plotHeight = self.config.height - 25  -- Account for title bar (15px) + margins (10px)
     local barWidth = plotWidth / self.config.timeWindow  -- Width per second
     
+    -- Track current outliers for transition detection
+    local currentOutliers = {}
+    
     -- Get the selected plot type once for all bars (for performance and consistency)
     local selectedPlotType = addon.PlotStateManager:GetSelectedPlotType()
     
-    -- Use appropriate scale: snapshot scale when paused, live scale when not
+    -- Use appropriate scale for this plot type
     local maxValue
     if self.plotState.isPaused and self.plotState.snapshot.isValid then
-        maxValue = math.max(self.plotState.snapshot.maxDPS or 0, self.plotState.snapshot.maxHPS or 0, self.config.minScale)
+        if self.plotType == "DPS" then
+            maxValue = self.plotState.snapshot.maxDPS or self.config.minScale
+        else
+            maxValue = self.plotState.snapshot.maxHPS or self.config.minScale
+        end
     else
-        maxValue = math.max(self.maxDPS or 0, self.maxHPS or 0, self.config.minScale)
+        if self.plotType == "DPS" then
+            maxValue = self.maxDPS or self.config.minScale
+        else
+            maxValue = self.maxHPS or self.config.minScale
+        end
     end
     
     for i, point in ipairs(points) do
         if point.value > 0 then  -- Only draw bars for non-zero values
             -- Check if this value is an outlier
             local isOutlier = self:IsOutlier(point.value, maxValue)
+            local timeKey = math.floor(point.time)
+            
+            -- Track outlier state
+            if isOutlier then
+                currentOutliers[timeKey] = true
+            end
+            
+            -- Check for transitions
+            local isNewOutlier = isOutlier and not self.previousOutliers[timeKey]
+            local wasOutlier = not isOutlier and self.previousOutliers[timeKey]
+            
+            -- Update transition tracking
+            if isNewOutlier then
+                self.outlierTransitions[timeKey] = {
+                    type = "becoming_outlier",
+                    startTime = GetTime(),
+                    duration = 0.5  -- Half second transition
+                }
+            elseif wasOutlier then
+                self.outlierTransitions[timeKey] = {
+                    type = "becoming_normal",
+                    startTime = GetTime(),
+                    duration = 0.5
+                }
+            end
             
             local x, yTop = self:DataToScreen(point.time, point.value, baselineOffset)
             local _, yBottom = self:DataToScreen(point.time, 0, baselineOffset)
@@ -691,14 +785,30 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
             
             -- Draw outlier indicator if this value exceeds scale
             if isOutlier then
+                -- Calculate transition alpha for smooth appearance
+                local transitionAlpha = 0.8
+                local pulseEffect = 0
+                
+                local transition = self.outlierTransitions[timeKey]
+                if transition and transition.type == "becoming_outlier" then
+                    local elapsed = GetTime() - transition.startTime
+                    local progress = math.min(elapsed / transition.duration, 1)
+                    transitionAlpha = progress * 0.8  -- Fade in
+                    
+                    -- Add pulse effect for new outliers
+                    if progress < 1 then
+                        pulseEffect = math.sin(progress * math.pi * 4) * 0.2  -- Pulse 2 times
+                    end
+                end
+                
                 -- Draw a special indicator on top of capped bars
                 local indicatorTexture = self:GetTexture()
                 
-                -- Use bright contrasting colors for outlier indicators
+                -- Use bright contrasting colors for outlier indicators with transition
                 if self.plotType == "DPS" then
-                    indicatorTexture:SetVertexColor(1, 1, 0, 0.8)  -- Bright yellow for DPS outliers
+                    indicatorTexture:SetVertexColor(1, 1, 0, transitionAlpha + pulseEffect)  -- Bright yellow
                 else
-                    indicatorTexture:SetVertexColor(0, 1, 1, 0.8)  -- Cyan for HPS outliers
+                    indicatorTexture:SetVertexColor(0, 1, 1, transitionAlpha + pulseEffect)  -- Cyan
                 end
                 
                 -- Create a small "spike" indicator at the top
@@ -707,15 +817,31 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
                 indicatorTexture:SetSize(barWidth * 0.6, 4)  -- Small horizontal indicator
                 indicatorTexture:Show()
                 
-                -- Optional: Add a small upward arrow/triangle
+                -- Optional: Add a small upward arrow/triangle with animation
                 local arrowTexture = self:GetTexture()
-                arrowTexture:SetVertexColor(1, 1, 1, 0.9)  -- White arrow
-                arrowTexture:SetPoint("BOTTOM", self.plotFrame, "BOTTOMLEFT", x, yTop + 2)
+                local arrowAlpha = math.min(transitionAlpha + 0.1, 0.9)
+                arrowTexture:SetVertexColor(1, 1, 1, arrowAlpha)  -- White arrow
+                
+                -- Animate arrow position slightly during transition
+                local arrowOffset = pulseEffect * 2  -- Move up/down with pulse
+                arrowTexture:SetPoint("BOTTOM", self.plotFrame, "BOTTOMLEFT", x, yTop + 2 + arrowOffset)
                 arrowTexture:SetSize(3, 3)  -- Tiny indicator
                 arrowTexture:Show()
             end
+            
+            -- Clean up old transitions
+            local transition = self.outlierTransitions[timeKey]
+            if transition then
+                local elapsed = GetTime() - transition.startTime
+                if elapsed > transition.duration then
+                    self.outlierTransitions[timeKey] = nil
+                end
+            end
         end
     end
+    
+    -- Update previous outliers for next frame's transition detection
+    self.previousOutliers = currentOutliers
 end
 
 -- Calculate glow effect based on crit rate and magnitude
@@ -1281,7 +1407,7 @@ function MetricsPlot:ShowBarTooltip(bar)
                         self:FormatNumberHumanized(bar.value)), 1, 1, 1)
     
     -- Check if this is an outlier and show additional info
-    local maxValue = math.max(self.maxDPS or 0, self.maxHPS or 0, self.config.minScale)
+    local maxValue = self.plotType == "DPS" and (self.maxDPS or self.config.minScale) or (self.maxHPS or self.config.minScale)
     if self:IsOutlier(bar.value, maxValue) then
         local overScale = bar.value / maxValue
         self.tooltip:AddLine(string.format("OUTLIER: %.1fx above scale", overScale), 

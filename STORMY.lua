@@ -20,8 +20,8 @@ addon._buildHash = "20250628_" .. math.random(1000, 9999)
 -- =============================================================================
 
 addon.ADDON_NAME = addonName
-addon.VERSION = "1.0.0"
-addon.BUILD_DATE = "2025-06-28"
+addon.VERSION = "1.0.13"
+addon.BUILD_DATE = "2025-08-08"
 
 -- =============================================================================
 -- SAVED VARIABLES AND CONFIGURATION
@@ -389,10 +389,14 @@ SlashCmdList["STORMY"] = function(msg)
             -- Use traditional max-value scaling
             if addon.DPSPlot then
                 addon.DPSPlot.config.usePercentileScaling = false
+                -- Force immediate scale recalculation
+                addon.DPSPlot.lastScaleUpdate = 0
                 print("[STORMY] DPS Plot: Using max-value scaling")
             end
             if addon.HPSPlot then
                 addon.HPSPlot.config.usePercentileScaling = false
+                -- Force immediate scale recalculation
+                addon.HPSPlot.lastScaleUpdate = 0
                 print("[STORMY] HPS Plot: Using max-value scaling")
             end
         elseif mode == "percentile" or mode == "95th" then
@@ -400,11 +404,13 @@ SlashCmdList["STORMY"] = function(msg)
             if addon.DPSPlot then
                 addon.DPSPlot.config.usePercentileScaling = true
                 addon.DPSPlot.config.scalePercentile = 0.95
+                addon.DPSPlot.lastScaleUpdate = 0  -- Force recalc
                 print("[STORMY] DPS Plot: Using 95th percentile scaling")
             end
             if addon.HPSPlot then
                 addon.HPSPlot.config.usePercentileScaling = true
                 addon.HPSPlot.config.scalePercentile = 0.95
+                addon.HPSPlot.lastScaleUpdate = 0  -- Force recalc
                 print("[STORMY] HPS Plot: Using 95th percentile scaling")
             end
         elseif mode == "90th" then
@@ -412,11 +418,13 @@ SlashCmdList["STORMY"] = function(msg)
             if addon.DPSPlot then
                 addon.DPSPlot.config.usePercentileScaling = true
                 addon.DPSPlot.config.scalePercentile = 0.90
+                addon.DPSPlot.lastScaleUpdate = 0  -- Force recalc
                 print("[STORMY] DPS Plot: Using 90th percentile scaling")
             end
             if addon.HPSPlot then
                 addon.HPSPlot.config.usePercentileScaling = true
                 addon.HPSPlot.config.scalePercentile = 0.90
+                addon.HPSPlot.lastScaleUpdate = 0  -- Force recalc
                 print("[STORMY] HPS Plot: Using 90th percentile scaling")
             end
         elseif mode == "85th" then
@@ -424,11 +432,13 @@ SlashCmdList["STORMY"] = function(msg)
             if addon.DPSPlot then
                 addon.DPSPlot.config.usePercentileScaling = true
                 addon.DPSPlot.config.scalePercentile = 0.85
+                addon.DPSPlot.lastScaleUpdate = 0  -- Force recalc
                 print("[STORMY] DPS Plot: Using 85th percentile scaling")
             end
             if addon.HPSPlot then
                 addon.HPSPlot.config.usePercentileScaling = true
                 addon.HPSPlot.config.scalePercentile = 0.85
+                addon.HPSPlot.lastScaleUpdate = 0  -- Force recalc
                 print("[STORMY] HPS Plot: Using 85th percentile scaling")
             end
         else
