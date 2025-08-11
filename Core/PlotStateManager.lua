@@ -40,7 +40,6 @@ end
 -- =============================================================================
 
 function PlotStateManager:RegisterPlot(plot, plotType)
-    print(string.format("[STORMY DEBUG] Registering plot type: %s", plotType))
     sharedState.registeredPlots[plotType] = plot
     
     -- Synchronize plot state with shared state on registration
@@ -162,15 +161,13 @@ end
 -- =============================================================================
 
 function PlotStateManager:ShowDetailWindow(plotType, timestamp, plotFrame)
-    print(string.format("[STORMY DEBUG] ShowDetailWindow called for %s, timestamp %d", plotType, timestamp))
-    
     -- Get the shared detail window instance
     local detailWindow = addon.EventDetailWindow:GetInstance()
     
     -- Get the appropriate plot instance
     local plot = sharedState.registeredPlots[plotType]
     if not plot then
-        print(string.format("[STORMY DEBUG] Plot type %s not registered", plotType))
+        -- Plot type not registered
         return
     end
     
@@ -178,11 +175,10 @@ function PlotStateManager:ShowDetailWindow(plotType, timestamp, plotFrame)
     local summary, events = plot:GetSecondDetails(timestamp)
     
     if summary then
-        print(string.format("[STORMY DEBUG] Showing detail window for %s with summary", plotType))
         -- Show the detail window with data
         detailWindow:Show(plotType, timestamp, summary, events, plotFrame)
     else
-        print(string.format("[STORMY DEBUG] No detail data found for %s timestamp %d", plotType, timestamp))
+        -- No detail data found for timestamp
     end
 end
 

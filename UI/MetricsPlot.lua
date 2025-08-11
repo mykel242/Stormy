@@ -1474,22 +1474,12 @@ function MetricsPlot:GetSecondDetails(timestamp)
     -- Get the appropriate accumulator
     if self.plotType == "DPS" and addon.DamageAccumulator then
         accumulator = addon.DamageAccumulator
-        print(string.format("[STORMY DEBUG] DPS plot getting details for timestamp %d", timestamp))
     elseif self.plotType == "HPS" and addon.HealingAccumulator then
         accumulator = addon.HealingAccumulator
-        print(string.format("[STORMY DEBUG] HPS plot getting details for timestamp %d", timestamp))
     end
     
     if accumulator and accumulator.GetSecondDetails then
-        local summary, events = accumulator:GetSecondDetails(timestamp)
-        if summary then
-            print(string.format("[STORMY DEBUG] %s: Found summary with %d total damage/healing", self.plotType, summary.totalDamage or 0))
-        else
-            print(string.format("[STORMY DEBUG] %s: No summary found for timestamp %d", self.plotType, timestamp))
-        end
-        return summary, events
-    else
-        print(string.format("[STORMY DEBUG] %s: No accumulator or GetSecondDetails method", self.plotType))
+        return accumulator:GetSecondDetails(timestamp)
     end
     
     return nil, nil
