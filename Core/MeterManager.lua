@@ -227,7 +227,7 @@ end
 function MeterManager:ToggleMeter(meterType)
     local meterInfo = registeredMeters[meterType]
     if not meterInfo then
-        -- Unknown meter type
+        -- Unknown meter type - fail silently
         return false
     end
     

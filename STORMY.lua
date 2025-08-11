@@ -20,8 +20,8 @@ addon._buildHash = "20250628_" .. math.random(1000, 9999)
 -- =============================================================================
 
 addon.ADDON_NAME = addonName
-addon.VERSION = "1.0.0"
-addon.BUILD_DATE = "2025-06-28"
+addon.VERSION = "1.0.13"
+addon.BUILD_DATE = "2025-08-08"
 
 -- =============================================================================
 -- SAVED VARIABLES AND CONFIGURATION
@@ -324,6 +324,8 @@ SlashCmdList["STORMY"] = function(msg)
         print("  /stormy debug - Show debug information")
         print("  /stormy reset - Reset statistics")
         print("  /stormy poolstats - Show pool statistics")
+        print("  /stormy plotscale <mode> - Set plot scaling (max|95th|90th|85th)")
+        print("  /stormy plotoutliers <on|off> - Toggle outlier indicators")
         print("  /stormy version - Show version")
     elseif command == "debug" then
         print("=== STORMY Debug Information ===")
@@ -380,6 +382,97 @@ SlashCmdList["STORMY"] = function(msg)
         if addon.TablePool then
             addon.TablePool:Debug()
         end
+    elseif command:match("^plotscale%s") then
+        -- Plot scaling configuration: /stormy plotscale percentile|max|95th|90th
+        local mode = command:match("^plotscale%s+(.+)")
+        if mode == "max" then
+            -- Use traditional max-value scaling
+            if addon.DPSPlot then
+                addon.DPSPlot.config.usePercentileScaling = false
+                -- Force immediate scale recalculation
+                addon.DPSPlot.lastScaleUpdate = 0
+                print("[STORMY] DPS Plot: Using max-value scaling")
+            end
+            if addon.HPSPlot then
+                addon.HPSPlot.config.usePercentileScaling = false
+                -- Force immediate scale recalculation
+                addon.HPSPlot.lastScaleUpdate = 0
+                print("[STORMY] HPS Plot: Using max-value scaling")
+            end
+        elseif mode == "percentile" or mode == "95th" then
+            -- Use 95th percentile scaling (default)
+            if addon.DPSPlot then
+                addon.DPSPlot.config.usePercentileScaling = true
+                addon.DPSPlot.config.scalePercentile = 0.95
+                addon.DPSPlot.lastScaleUpdate = 0  -- Force recalc
+                print("[STORMY] DPS Plot: Using 95th percentile scaling")
+            end
+            if addon.HPSPlot then
+                addon.HPSPlot.config.usePercentileScaling = true
+                addon.HPSPlot.config.scalePercentile = 0.95
+                addon.HPSPlot.lastScaleUpdate = 0  -- Force recalc
+                print("[STORMY] HPS Plot: Using 95th percentile scaling")
+            end
+        elseif mode == "90th" then
+            -- Use 90th percentile scaling
+            if addon.DPSPlot then
+                addon.DPSPlot.config.usePercentileScaling = true
+                addon.DPSPlot.config.scalePercentile = 0.90
+                addon.DPSPlot.lastScaleUpdate = 0  -- Force recalc
+                print("[STORMY] DPS Plot: Using 90th percentile scaling")
+            end
+            if addon.HPSPlot then
+                addon.HPSPlot.config.usePercentileScaling = true
+                addon.HPSPlot.config.scalePercentile = 0.90
+                addon.HPSPlot.lastScaleUpdate = 0  -- Force recalc
+                print("[STORMY] HPS Plot: Using 90th percentile scaling")
+            end
+        elseif mode == "85th" then
+            -- Use 85th percentile scaling (more aggressive outlier filtering)
+            if addon.DPSPlot then
+                addon.DPSPlot.config.usePercentileScaling = true
+                addon.DPSPlot.config.scalePercentile = 0.85
+                addon.DPSPlot.lastScaleUpdate = 0  -- Force recalc
+                print("[STORMY] DPS Plot: Using 85th percentile scaling")
+            end
+            if addon.HPSPlot then
+                addon.HPSPlot.config.usePercentileScaling = true
+                addon.HPSPlot.config.scalePercentile = 0.85
+                addon.HPSPlot.lastScaleUpdate = 0  -- Force recalc
+                print("[STORMY] HPS Plot: Using 85th percentile scaling")
+            end
+        else
+            print("[STORMY] Usage: /stormy plotscale <mode>")
+            print("  max     - Use maximum value for scaling (outliers affect scale)")
+            print("  95th    - Use 95th percentile (ignores top 5% outliers) [DEFAULT]")
+            print("  90th    - Use 90th percentile (ignores top 10% outliers)")
+            print("  85th    - Use 85th percentile (ignores top 15% outliers)")
+        end
+    elseif command:match("^plotoutliers%s") then
+        -- Outlier indicator toggle: /stormy plotoutliers on|off
+        local mode = command:match("^plotoutliers%s+(.+)")
+        if mode == "on" then
+            if addon.DPSPlot then
+                addon.DPSPlot.config.showOutlierIndicators = true
+                print("[STORMY] DPS Plot: Outlier indicators enabled")
+            end
+            if addon.HPSPlot then
+                addon.HPSPlot.config.showOutlierIndicators = true
+                print("[STORMY] HPS Plot: Outlier indicators enabled")
+            end
+        elseif mode == "off" then
+            if addon.DPSPlot then
+                addon.DPSPlot.config.showOutlierIndicators = false
+                print("[STORMY] DPS Plot: Outlier indicators disabled")
+            end
+            if addon.HPSPlot then
+                addon.HPSPlot.config.showOutlierIndicators = false
+                print("[STORMY] HPS Plot: Outlier indicators disabled")
+            end
+        else
+            print("[STORMY] Usage: /stormy plotoutliers <on|off>")
+            print("Shows visual indicators for bars that exceed 2x the scale value")
+        end
     else
         print("STORMY Commands:")
         print("  /stormy dps - Toggle DPS meter")
@@ -389,6 +482,8 @@ SlashCmdList["STORMY"] = function(msg)
         print("  /stormy debug - Show debug information")
         print("  /stormy reset - Reset statistics")
         print("  /stormy poolstats - Show pool statistics")
+        print("  /stormy plotscale <mode> - Set plot scaling (max|95th|90th|85th)")
+        print("  /stormy plotoutliers <on|off> - Toggle outlier indicators")
         print("  /stormy version - Show version")
     end
 end
