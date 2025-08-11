@@ -184,9 +184,20 @@ function MetricsPlot:UpdateData()
     -- Sample data based on plot type
     if self.plotType == "DPS" then
         if addon.DamageAccumulator and addon.DamageAccumulator.rollingData then
-            self.dpsPoints = addon.DamageAccumulator:GetTimeSeriesData(startTime, now, 1)
+            local rawData = addon.DamageAccumulator:GetTimeSeriesData(startTime, now, 1)
+            -- Convert raw totals to rates (damage per second)
+            self.dpsPoints = {}
+            for _, point in ipairs(rawData) do
+                table.insert(self.dpsPoints, {
+                    time = point.time,
+                    value = point.value  -- For 1-second buckets, total = rate
+                })
+            end
             -- Enhance with critical hit data
             self:EnhancePointsWithCritData(self.dpsPoints, addon.DamageAccumulator)
+            if #self.dpsPoints > 0 then
+                print(string.format("[STORMY] DPS Plot: Got %d data points, max value: %.0f", #self.dpsPoints, self:GetMaxValue(self.dpsPoints)))
+            end
         else
             self.dpsPoints = {}
             print("DamageAccumulator not available or no rolling data")
@@ -195,9 +206,20 @@ function MetricsPlot:UpdateData()
     else
         -- HPS plot
         if addon.HealingAccumulator and addon.HealingAccumulator.rollingData then
-            self.hpsPoints = addon.HealingAccumulator:GetTimeSeriesData(startTime, now, 1)
+            local rawData = addon.HealingAccumulator:GetTimeSeriesData(startTime, now, 1)
+            -- Convert raw totals to rates (healing per second)
+            self.hpsPoints = {}
+            for _, point in ipairs(rawData) do
+                table.insert(self.hpsPoints, {
+                    time = point.time,
+                    value = point.value  -- For 1-second buckets, total = rate
+                })
+            end
             -- Enhance with critical hit data
             self:EnhancePointsWithCritData(self.hpsPoints, addon.HealingAccumulator)
+            if #self.hpsPoints > 0 then
+                print(string.format("[STORMY] HPS Plot: Got %d data points, max value: %.0f", #self.hpsPoints, self:GetMaxValue(self.hpsPoints)))
+            end
         else
             self.hpsPoints = {}
             print("HealingAccumulator not available or no rolling data")
@@ -287,6 +309,17 @@ function MetricsPlot:CollectPlotValues()
     end
     
     return dpsValues, hpsValues
+end
+
+-- Get maximum value from a points array (helper for debugging)
+function MetricsPlot:GetMaxValue(points)
+    local maxVal = 0
+    for _, point in ipairs(points) do
+        if point.value > maxVal then
+            maxVal = point.value
+        end
+    end
+    return maxVal
 end
 
 -- Determine if percentile scaling should be used
