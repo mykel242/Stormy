@@ -195,12 +195,8 @@ function MetricsPlot:UpdateData()
             end
             -- Enhance with critical hit data
             self:EnhancePointsWithCritData(self.dpsPoints, addon.DamageAccumulator)
-            if #self.dpsPoints > 0 then
-                print(string.format("[STORMY] DPS Plot: Got %d data points, max value: %.0f", #self.dpsPoints, self:GetMaxValue(self.dpsPoints)))
-            end
         else
             self.dpsPoints = {}
-            print("DamageAccumulator not available or no rolling data")
         end
         self.hpsPoints = {}  -- Empty for DPS plot
     else
@@ -217,12 +213,8 @@ function MetricsPlot:UpdateData()
             end
             -- Enhance with critical hit data
             self:EnhancePointsWithCritData(self.hpsPoints, addon.HealingAccumulator)
-            if #self.hpsPoints > 0 then
-                print(string.format("[STORMY] HPS Plot: Got %d data points, max value: %.0f", #self.hpsPoints, self:GetMaxValue(self.hpsPoints)))
-            end
         else
             self.hpsPoints = {}
-            print("HealingAccumulator not available or no rolling data")
         end
         self.dpsPoints = {}  -- Empty for HPS plot
     end
