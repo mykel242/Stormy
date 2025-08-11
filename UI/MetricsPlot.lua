@@ -15,6 +15,12 @@ local MetricsPlot = addon.MetricsPlot
 local FONT_PATH = "Interface\\AddOns\\Stormy\\assets\\SCP-SB.ttf"
 local FONT_SIZE_LABELS = 12
 
+-- Scaling constants
+local SCALE_UP_THRESHOLD = 1.3      -- Scale up when value exceeds current scale by 30%
+local SCALE_DOWN_THRESHOLD = 0.5    -- Scale down when value is less than 50% of current scale
+local TRANSITION_DURATION = 0.5     -- Animation duration for outlier transitions
+local OUTLIER_CLEANUP_TIME = 5.0    -- Clean up old transitions after 5 seconds
+
 -- Plot configuration
 local PLOT_CONFIG = {
     -- Window dimensions
@@ -262,6 +268,100 @@ function MetricsPlot:EnsureBaselineData(startTime, endTime)
     end
 end
 
+-- Collect values from plot data
+function MetricsPlot:CollectPlotValues()
+    local dpsValues = {}
+    local hpsValues = {}
+    
+    -- Collect all values from current data
+    for _, point in ipairs(self.dpsPoints) do
+        if point.value > 0 then
+            table.insert(dpsValues, point.value)
+        end
+    end
+    
+    for _, point in ipairs(self.hpsPoints) do
+        if point.value > 0 then
+            table.insert(hpsValues, point.value)
+        end
+    end
+    
+    return dpsValues, hpsValues
+end
+
+-- Determine if percentile scaling should be used
+function MetricsPlot:ShouldUsePercentileScaling(dpsCount, hpsCount, uptime)
+    if not self.config.usePercentileScaling then
+        return false
+    end
+    
+    local hasEnoughData = (self.plotType == "DPS" and dpsCount >= self.config.minDataForPercentile) or
+                         (self.plotType == "HPS" and hpsCount >= self.config.minDataForPercentile)
+    local hasWarmedUp = uptime >= self.config.warmupPeriod
+    
+    return hasEnoughData and hasWarmedUp
+end
+
+-- Calculate target scales based on data
+function MetricsPlot:CalculateTargetScales(usePercentile, dpsValues, hpsValues)
+    local targetMaxDPS, targetMaxHPS
+    
+    if usePercentile then
+        -- Calculate percentile values
+        local percentileDPS = self:CalculatePercentile(dpsValues, self.config.scalePercentile)
+        local percentileHPS = self:CalculatePercentile(hpsValues, self.config.scalePercentile)
+        
+        -- Ensure minimum meaningful scale
+        percentileDPS = math.max(percentileDPS, self.config.minScale)
+        percentileHPS = math.max(percentileHPS, self.config.minScale)
+        
+        -- Add margin and round to nice numbers
+        targetMaxDPS = self:RoundToNiceScale(percentileDPS * (1 + self.config.scaleMargin))
+        targetMaxHPS = self:RoundToNiceScale(percentileHPS * (1 + self.config.scaleMargin))
+    else
+        -- Traditional max-value scaling (fallback)
+        local currentMaxDPS = self.config.minScale
+        local currentMaxHPS = self.config.minScale
+        
+        for _, value in ipairs(dpsValues) do
+            currentMaxDPS = math.max(currentMaxDPS, value)
+        end
+        
+        for _, value in ipairs(hpsValues) do
+            currentMaxHPS = math.max(currentMaxHPS, value)
+        end
+        
+        targetMaxDPS = self:RoundToNiceScale(currentMaxDPS * (1 + self.config.scaleMargin))
+        targetMaxHPS = self:RoundToNiceScale(currentMaxHPS * (1 + self.config.scaleMargin))
+    end
+    
+    return targetMaxDPS, targetMaxHPS
+end
+
+-- Apply hysteresis to scale changes
+function MetricsPlot:ApplyScaleHysteresis(targetMaxDPS, targetMaxHPS)
+    -- Initialize if not set
+    if not self.maxDPS then self.maxDPS = targetMaxDPS end
+    if not self.maxHPS then self.maxHPS = targetMaxHPS end
+    
+    -- Stable scaling with hysteresis using constants
+    if targetMaxDPS > self.maxDPS * SCALE_UP_THRESHOLD then
+        self.maxDPS = targetMaxDPS
+    elseif targetMaxDPS < self.maxDPS * SCALE_DOWN_THRESHOLD then
+        self.maxDPS = targetMaxDPS
+    end
+    
+    if targetMaxHPS > self.maxHPS * SCALE_UP_THRESHOLD then
+        self.maxHPS = targetMaxHPS
+    elseif targetMaxHPS < self.maxHPS * SCALE_DOWN_THRESHOLD then
+        self.maxHPS = targetMaxHPS
+    end
+    
+    -- Ensure minimum scale
+    self.maxDPS = math.max(self.maxDPS, self.config.minScale)
+    self.maxHPS = math.max(self.maxHPS, self.config.minScale)
+end
+
 -- Update Y-axis scaling with outlier-resistant percentile-based scaling
 function MetricsPlot:UpdateScale()
     local now = GetTime()
@@ -273,123 +373,24 @@ function MetricsPlot:UpdateScale()
     
     self.lastScaleUpdate = now
     
-    local targetMaxDPS, targetMaxHPS
+    -- Collect values once
+    local dpsValues, hpsValues = self:CollectPlotValues()
     
-    -- Check if we have enough data and time has passed for percentile scaling
-    local now = GetTime()
+    -- Determine if we should use percentile scaling
     local uptime = now - addon.startTime
-    local usePercentile = self.config.usePercentileScaling
+    local usePercentile = self:ShouldUsePercentileScaling(#dpsValues, #hpsValues, uptime)
     
-    if usePercentile then
-        -- Use percentile-based scaling (outlier resistant)
-        local dpsValues = {}
-        local hpsValues = {}
-        
-        -- Collect all values from current data
-        for _, point in ipairs(self.dpsPoints) do
-            if point.value > 0 then
-                table.insert(dpsValues, point.value)
-            end
-        end
-        
-        for _, point in ipairs(self.hpsPoints) do
-            if point.value > 0 then
-                table.insert(hpsValues, point.value)
-            end
-        end
-        
-        -- Check if we meet minimum data requirements
-        local hasEnoughData = (self.plotType == "DPS" and #dpsValues >= self.config.minDataForPercentile) or
-                             (self.plotType == "HPS" and #hpsValues >= self.config.minDataForPercentile)
-        local hasWarmedUp = uptime >= self.config.warmupPeriod
-        
-        -- Fall back to max scaling if not enough data
-        if not hasEnoughData or not hasWarmedUp then
-            usePercentile = false
-            -- Silently fall back to max scaling during warmup
-        end
-    end
+    -- Calculate target scales
+    local targetMaxDPS, targetMaxHPS = self:CalculateTargetScales(usePercentile, dpsValues, hpsValues)
     
-    if usePercentile then
-        -- Continue with existing percentile calculation
-        local dpsValues = {}
-        local hpsValues = {}
-        
-        for _, point in ipairs(self.dpsPoints) do
-            if point.value > 0 then
-                table.insert(dpsValues, point.value)
-            end
-        end
-        
-        for _, point in ipairs(self.hpsPoints) do
-            if point.value > 0 then
-                table.insert(hpsValues, point.value)
-            end
-        end
-        
-        -- Calculate percentile values
-        local percentileDPS = self:CalculatePercentile(dpsValues, self.config.scalePercentile)
-        local percentileHPS = self:CalculatePercentile(hpsValues, self.config.scalePercentile)
-        
-        -- Percentile calculation complete - no debug output needed
-        
-        -- Ensure minimum meaningful scale
-        percentileDPS = math.max(percentileDPS, self.config.minScale)
-        percentileHPS = math.max(percentileHPS, self.config.minScale)
-        
-        -- Add margin and round to nice numbers
-        targetMaxDPS = self:RoundToNiceScale(percentileDPS * (1 + self.config.scaleMargin))
-        targetMaxHPS = self:RoundToNiceScale(percentileHPS * (1 + self.config.scaleMargin))
-        
-    else
-        -- Traditional max-value scaling (fallback)
-        local currentMaxDPS = self.config.minScale
-        local currentMaxHPS = self.config.minScale
-        
-        for _, point in ipairs(self.dpsPoints) do
-            currentMaxDPS = math.max(currentMaxDPS, point.value)
-        end
-        
-        for _, point in ipairs(self.hpsPoints) do
-            currentMaxHPS = math.max(currentMaxHPS, point.value)
-        end
-        
-        targetMaxDPS = self:RoundToNiceScale(currentMaxDPS * (1 + self.config.scaleMargin))
-        targetMaxHPS = self:RoundToNiceScale(currentMaxHPS * (1 + self.config.scaleMargin))
-    end
-    
-    -- Initialize if not set
-    if not self.maxDPS then self.maxDPS = targetMaxDPS end
-    if not self.maxHPS then self.maxHPS = targetMaxHPS end
-    
-    -- Stable scaling with hysteresis - less aggressive changes
-    if targetMaxDPS > self.maxDPS * 1.3 then
-        -- Scale up when percentile is 30% higher than current
-        self.maxDPS = targetMaxDPS
-    elseif targetMaxDPS < self.maxDPS * 0.5 then
-        -- Scale down when percentile is less than 50% of current scale
-        self.maxDPS = targetMaxDPS
-    end
-    
-    if targetMaxHPS > self.maxHPS * 1.3 then
-        self.maxHPS = targetMaxHPS
-    elseif targetMaxHPS < self.maxHPS * 0.5 then
-        self.maxHPS = targetMaxHPS
-    end
-    
-    -- Ensure minimum scale
-    self.maxDPS = math.max(self.maxDPS, self.config.minScale)
-    self.maxHPS = math.max(self.maxHPS, self.config.minScale)
+    -- Apply hysteresis to prevent scale bouncing
+    self:ApplyScaleHysteresis(targetMaxDPS, targetMaxHPS)
 end
 
 -- Calculate percentile value from a list of numbers
 function MetricsPlot:CalculatePercentile(values, percentile)
     if #values == 0 then
         return 0
-    end
-    
-    if #values == 1 then
-        return values[1]
     end
     
     -- Create a copy and sort
@@ -400,13 +401,18 @@ function MetricsPlot:CalculatePercentile(values, percentile)
         end
     end
     
+    -- Handle edge cases
     if #sortedValues == 0 then
         return 0
     end
     
+    if #sortedValues == 1 then
+        return sortedValues[1]
+    end
+    
     table.sort(sortedValues)
     
-    -- Calculate percentile index
+    -- Calculate percentile index (safe with 2+ values)
     local index = percentile * (#sortedValues - 1) + 1
     local lower = math.floor(index)
     local upper = math.ceil(index)
@@ -698,13 +704,13 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
                 self.outlierTransitions[timeKey] = {
                     type = "becoming_outlier",
                     startTime = GetTime(),
-                    duration = 0.5  -- Half second transition
+                    duration = TRANSITION_DURATION
                 }
             elseif wasOutlier then
                 self.outlierTransitions[timeKey] = {
                     type = "becoming_normal",
                     startTime = GetTime(),
-                    duration = 0.5
+                    duration = TRANSITION_DURATION
                 }
             end
             
@@ -738,24 +744,52 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
                 isHovered = (pointTime == hoveredTime)
             end
             
-            -- Base color with selection dimming and hover highlighting
+            -- Determine bar color based on state
             local barColor = {color[1], color[2], color[3], color[4]}
+            local transitionAlpha = 1.0
+            local pulseEffect = 0
             
-            -- Apply hover highlighting first (takes precedence)
+            -- Override color for outliers
+            if isOutlier then
+                -- Use outlier colors for the entire bar
+                if self.plotType == "DPS" then
+                    barColor = {1, 1, 0, 1}  -- Yellow for DPS outliers
+                else
+                    barColor = {0, 1, 1, 1}  -- Cyan for HPS outliers
+                end
+                
+                -- Apply transition effects for new outliers
+                local transition = self.outlierTransitions[timeKey]
+                if transition and transition.type == "becoming_outlier" then
+                    local elapsed = GetTime() - transition.startTime
+                    local progress = math.min(elapsed / transition.duration, 1)
+                    transitionAlpha = progress  -- Fade in
+                    
+                    -- Add pulse effect for new outliers
+                    if progress < 1 then
+                        pulseEffect = math.sin(progress * math.pi * 4) * 0.2  -- Pulse 2 times
+                    end
+                end
+                
+                -- Apply transition alpha to outlier color
+                barColor[4] = transitionAlpha + pulseEffect
+            end
+            
+            -- Apply hover highlighting (takes precedence over other effects)
             if isHovered then
-                -- Use tracking colors for hover highlight - much more visible!
+                -- Use tracking colors for hover highlight
                 if self.plotType == "DPS" then
                     barColor = {255/255, 192/255, 46/255, 1}  -- Orange for DPS hover
                 else
                     barColor = {40/255, 190/255, 250/255, 1}  -- Light blue for HPS hover
                 end
             elseif self.plotState.selectedBar and selectedPlotType ~= self.plotType then
-                -- Dim all bars in non-selected plot types (but not if hovered)
+                -- Dim all bars in non-selected plot types
                 barColor[1] = barColor[1] * 0.5
                 barColor[2] = barColor[2] * 0.5
                 barColor[3] = barColor[3] * 0.5
             elseif not isSelected and self.plotState.selectedBar and selectedPlotType == self.plotType then
-                -- Dim unselected bars in the selected plot type (but not if hovered)
+                -- Dim unselected bars in the selected plot type
                 barColor[1] = barColor[1] * 0.5
                 barColor[2] = barColor[2] * 0.5
                 barColor[3] = barColor[3] * 0.5
@@ -782,66 +816,20 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
             texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x - barWidth/2, yBottom)
             texture:SetSize(math.max(1, barWidth * 0.8), yTop - yBottom)  -- 80% width with gaps
             texture:Show()
-            
-            -- Draw outlier indicator if this value exceeds scale
-            if isOutlier then
-                -- Calculate transition alpha for smooth appearance
-                local transitionAlpha = 0.8
-                local pulseEffect = 0
-                
-                local transition = self.outlierTransitions[timeKey]
-                if transition and transition.type == "becoming_outlier" then
-                    local elapsed = GetTime() - transition.startTime
-                    local progress = math.min(elapsed / transition.duration, 1)
-                    transitionAlpha = progress * 0.8  -- Fade in
-                    
-                    -- Add pulse effect for new outliers
-                    if progress < 1 then
-                        pulseEffect = math.sin(progress * math.pi * 4) * 0.2  -- Pulse 2 times
-                    end
-                end
-                
-                -- Draw a special indicator on top of capped bars
-                local indicatorTexture = self:GetTexture()
-                
-                -- Use bright contrasting colors for outlier indicators with transition
-                if self.plotType == "DPS" then
-                    indicatorTexture:SetVertexColor(1, 1, 0, transitionAlpha + pulseEffect)  -- Bright yellow
-                else
-                    indicatorTexture:SetVertexColor(0, 1, 1, transitionAlpha + pulseEffect)  -- Cyan
-                end
-                
-                -- Create a small "spike" indicator at the top
-                indicatorTexture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", 
-                                        x - barWidth * 0.3, yTop - 2)
-                indicatorTexture:SetSize(barWidth * 0.6, 4)  -- Small horizontal indicator
-                indicatorTexture:Show()
-                
-                -- Optional: Add a small upward arrow/triangle with animation
-                local arrowTexture = self:GetTexture()
-                local arrowAlpha = math.min(transitionAlpha + 0.1, 0.9)
-                arrowTexture:SetVertexColor(1, 1, 1, arrowAlpha)  -- White arrow
-                
-                -- Animate arrow position slightly during transition
-                local arrowOffset = pulseEffect * 2  -- Move up/down with pulse
-                arrowTexture:SetPoint("BOTTOM", self.plotFrame, "BOTTOMLEFT", x, yTop + 2 + arrowOffset)
-                arrowTexture:SetSize(3, 3)  -- Tiny indicator
-                arrowTexture:Show()
-            end
-            
-            -- Clean up old transitions
-            local transition = self.outlierTransitions[timeKey]
-            if transition then
-                local elapsed = GetTime() - transition.startTime
-                if elapsed > transition.duration then
-                    self.outlierTransitions[timeKey] = nil
-                end
-            end
         end
     end
     
     -- Update previous outliers for next frame's transition detection
     self.previousOutliers = currentOutliers
+    
+    -- Clean up old transition entries to prevent memory leak
+    local now = GetTime()
+    for timeKey, transition in pairs(self.outlierTransitions) do
+        local elapsed = now - transition.startTime
+        if elapsed > OUTLIER_CLEANUP_TIME then
+            self.outlierTransitions[timeKey] = nil
+        end
+    end
 end
 
 -- Calculate glow effect based on crit rate and magnitude
