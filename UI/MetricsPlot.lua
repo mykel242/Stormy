@@ -612,23 +612,35 @@ function MetricsPlot:PositionValueLabelAboveHighestBar(maxValue)
     local plotWidth = self.config.width - 60
     local plotHeight = self.config.height - 25
     
-    -- Check if we have any data to display
-    local hasData = false
+    -- Check if we have any data to display (non-zero values)
+    local hasVisibleData = false
+    local points
+    
     if self.plotState.isPaused and self.plotState.snapshot.isValid then
         if self.plotType == "DPS" then
-            hasData = self.plotState.snapshot.dpsPoints and #self.plotState.snapshot.dpsPoints > 0
+            points = self.plotState.snapshot.dpsPoints
         else
-            hasData = self.plotState.snapshot.hpsPoints and #self.plotState.snapshot.hpsPoints > 0
+            points = self.plotState.snapshot.hpsPoints
         end
     else
         if self.plotType == "DPS" then
-            hasData = self.dpsPoints and #self.dpsPoints > 0
+            points = self.dpsPoints
         else
-            hasData = self.hpsPoints and #self.hpsPoints > 0
+            points = self.hpsPoints
         end
     end
     
-    if hasData and maxValue > 0 then
+    -- Check if we have any non-zero values
+    if points and #points > 0 then
+        for _, point in ipairs(points) do
+            if point and point.value and point.value > 0 then
+                hasVisibleData = true
+                break
+            end
+        end
+    end
+    
+    if hasVisibleData and maxValue > 0 then
         -- Position in top-right corner, slightly inset
         local x = 50 + plotWidth - 40
         local y = plotHeight - 10
@@ -683,6 +695,11 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
         return
     end
     
+    -- Validate color parameter
+    if not color or type(color) ~= "table" or #color < 4 then
+        color = {1, 1, 1, 1}  -- Default to white if color is invalid
+    end
+    
     local plotWidth = self.config.width - 60
     local plotHeight = self.config.height - 25  -- Account for title bar (15px) + margins (10px)
     local barWidth = plotWidth / self.config.timeWindow  -- Width per second
@@ -710,7 +727,12 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
     end
     
     for i, point in ipairs(points) do
-        if point.value > 0 then  -- Only draw bars for non-zero values
+        -- Validate point data
+        if not point or type(point) ~= "table" then
+            -- Skip invalid point
+        elseif not point.time or not point.value then
+            -- Skip points missing required fields
+        elseif point.value > 0 then  -- Only draw bars for non-zero values
             -- Check if this value is an outlier
             local isOutlier = self:IsOutlier(point.value, maxValue)
             local timeKey = math.floor(point.time)
@@ -828,7 +850,11 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
             if shouldGlow then
                 -- Draw glow layer behind the bar
                 local glowTexture = self:GetTexture()
-                glowTexture:SetVertexColor(barColor[1] * 1.5, barColor[2] * 1.5, barColor[3] * 1.5, glowIntensity)
+                -- Clamp glow colors to valid range [0, 1]
+                local glowR = math.min(1, (barColor[1] or 1) * 1.5)
+                local glowG = math.min(1, (barColor[2] or 1) * 1.5)
+                local glowB = math.min(1, (barColor[3] or 1) * 1.5)
+                glowTexture:SetVertexColor(glowR, glowG, glowB, glowIntensity or 0.4)
                 glowTexture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", 
                                    x - barWidth * 0.6, yBottom - 2)
                 glowTexture:SetSize(barWidth * 1.2, (yTop - yBottom) + 4)
@@ -837,7 +863,8 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
             
             -- Draw main vertical bar
             local texture = self:GetTexture()
-            texture:SetVertexColor(barColor[1], barColor[2], barColor[3], barColor[4])
+            -- Ensure all color values are valid
+            texture:SetVertexColor(barColor[1] or 1, barColor[2] or 0, barColor[3] or 0, barColor[4] or 1)
             texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x - barWidth/2, yBottom)
             texture:SetSize(math.max(1, barWidth * 0.8), yTop - yBottom)  -- 80% width with gaps
             texture:Show()
