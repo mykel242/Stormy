@@ -474,6 +474,11 @@ function MeterAccumulator:GetTimeSeriesData(startTime, endTime, bucketSize)
     
     local buckets = {}
     
+    -- Ensure rolling data exists
+    if not self.rollingData or not self.rollingData.values then
+        return buckets
+    end
+    
     -- Align start time to bucket boundary (floor to nearest bucket)
     local alignedStartTime = math.floor(startTime / bucketSize) * bucketSize
     local currentTime = alignedStartTime
@@ -485,7 +490,8 @@ function MeterAccumulator:GetTimeSeriesData(startTime, endTime, bucketSize)
         
         -- Sum all events in this time bucket
         for timestamp, amount in pairs(self.rollingData.values) do
-            if type(timestamp) == "number" and timestamp >= currentTime and timestamp < bucketEnd then
+            if type(timestamp) == "number" and type(amount) == "number" and 
+               timestamp >= currentTime and timestamp < bucketEnd then
                 totalValue = totalValue + amount
             end
         end
