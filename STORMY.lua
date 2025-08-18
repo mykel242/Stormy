@@ -20,8 +20,8 @@ addon._buildHash = "20250628_" .. math.random(1000, 9999)
 -- =============================================================================
 
 addon.ADDON_NAME = addonName
-addon.VERSION = "1.0.13"
-addon.BUILD_DATE = "2025-08-08"
+addon.VERSION = "1.0.14"
+addon.BUILD_DATE = "2025-08-18"
 
 -- =============================================================================
 -- SAVED VARIABLES AND CONFIGURATION
