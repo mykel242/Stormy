@@ -623,7 +623,17 @@ end
 function MetricsPlot:ConfigureTexture(texture, x, y, width, height, r, g, b, a)
     texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x, y)
     texture:SetSize(width, height)
-    texture:SetVertexColor(r or 1, g or 1, b or 1, a or 1)
+    -- Ensure all color values are valid numbers between 0 and 1
+    local red = tonumber(r) or 1
+    local green = tonumber(g) or 1  
+    local blue = tonumber(b) or 1
+    local alpha = tonumber(a) or 1
+    -- Clamp values to valid range
+    red = math.max(0, math.min(1, red))
+    green = math.max(0, math.min(1, green))
+    blue = math.max(0, math.min(1, blue))
+    alpha = math.max(0, math.min(1, alpha))
+    texture:SetVertexColor(red, green, blue, alpha)
     return texture
 end
 
@@ -737,10 +747,12 @@ function MetricsPlot:DrawGrid()
         local y = 5 + (i / self.config.gridLines) * (plotHeight - 5)  -- Adjust for margins
         
         local texture = self:GetTexture()
-        texture:SetVertexColor(0.3, 0.3, 0.3, 0.3)  -- Subtle grid lines
-        texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", 50, y)
-        texture:SetSize(plotWidth, 1)
-        texture:Show()
+        if texture then
+            texture:SetVertexColor(0.3, 0.3, 0.3, 0.3)  -- Subtle grid lines
+            texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", 50, y)
+            texture:SetSize(plotWidth, 1)
+            texture:Show()
+        end
     end
     
     -- Show scale label above the highest bar
@@ -768,10 +780,12 @@ function MetricsPlot:DrawGrid()
         local x = 50 + (i / self.config.timeMarks) * plotWidth
         
         local texture = self:GetTexture()
-        texture:SetVertexColor(0.3, 0.3, 0.3, 0.3)  -- Subtle grid lines
-        texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x, 5)
-        texture:SetSize(1, plotHeight)
-        texture:Show()
+        if texture then
+            texture:SetVertexColor(0.3, 0.3, 0.3, 0.3)  -- Subtle grid lines
+            texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x, 5)
+            texture:SetSize(1, plotHeight)
+            texture:Show()
+        end
     end
 end
 
