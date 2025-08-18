@@ -475,6 +475,10 @@ SlashCmdList["STORMY"] = function(msg)
         end
     elseif command == "perfstats" or command == "performance" then
         -- Toggle performance statistics tracking
+        -- Initialize db structure if needed
+        addon.db = addon.db or {}
+        addon.db.profile = addon.db.profile or {}
+        
         addon.db.profile.debugMode = not addon.db.profile.debugMode
         if addon.db.profile.debugMode then
             print("[STORMY] Performance tracking ENABLED - Statistics will be printed every 100 frames")

@@ -990,8 +990,12 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
                 end
             end
             
-            -- Handle dimming by using work color
-            local r, g, b, a = barColor[1], barColor[2], barColor[3], barColor[4]
+            -- Handle dimming by using work color (with nil checks)
+            local r = barColor and barColor[1] or 1
+            local g = barColor and barColor[2] or 1
+            local b = barColor and barColor[3] or 1
+            local a = barColor and barColor[4] or 1
+            
             if needsDimming then
                 -- Use work color for dimmed values
                 COLOR_CACHE.WORK[1] = r * 0.5
@@ -1025,10 +1029,10 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
                 -- Draw glow layer behind the bar
                 local glowTexture = self:GetTexture()
                 if glowTexture then
-                    -- Clamp glow colors to valid range [0, 1]
-                    local glowR = math.min(1, r * 1.5)
-                    local glowG = math.min(1, g * 1.5)
-                    local glowB = math.min(1, b * 1.5)
+                    -- Clamp glow colors to valid range [0, 1] with nil checks
+                    local glowR = math.min(1, (r or 1) * 1.5)
+                    local glowG = math.min(1, (g or 1) * 1.5)
+                    local glowB = math.min(1, (b or 1) * 1.5)
                     self:ConfigureTexture(glowTexture,
                         x - barWidth * 0.6, yBottom - 2,
                         barWidth * 1.2, (yTop - yBottom) + 4,
