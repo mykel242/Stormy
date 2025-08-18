@@ -199,7 +199,7 @@ function MetricsPlot:SampleAccumulatorData(rollingData, startTime, endTime, wind
     return points
 end
 
--- Update plot data by sampling accumulators
+-- Update plot data by sampling accumulators (optimized to reuse arrays)
 function MetricsPlot:UpdateData()
     if not addon.TimingManager then
         return
@@ -209,42 +209,82 @@ function MetricsPlot:UpdateData()
     local now = addon.TimingManager:GetCurrentRelativeTime()
     local startTime = now - self.config.timeWindow
     
+    -- Initialize arrays if they don't exist
+    self.dpsPoints = self.dpsPoints or {}
+    self.hpsPoints = self.hpsPoints or {}
+    
     -- Sample data based on plot type
     if self.plotType == "DPS" then
         if addon.DamageAccumulator and addon.DamageAccumulator.rollingData then
             local rawData = addon.DamageAccumulator:GetTimeSeriesData(startTime, now, 1)
-            -- Convert raw totals to rates (damage per second)
-            self.dpsPoints = {}
-            for _, point in ipairs(rawData) do
-                table.insert(self.dpsPoints, {
-                    time = point.time,
-                    value = point.value  -- For 1-second buckets, total = rate
-                })
+            -- Reuse existing array, update values in-place
+            local pointCount = #rawData
+            for i = 1, pointCount do
+                local point = self.dpsPoints[i]
+                if point then
+                    -- Update existing point (no allocation)
+                    point.time = rawData[i].time
+                    point.value = rawData[i].value
+                else
+                    -- Only create if array is growing
+                    self.dpsPoints[i] = {
+                        time = rawData[i].time,
+                        value = rawData[i].value
+                    }
+                end
+            end
+            -- Trim array if it shrank
+            for i = pointCount + 1, #self.dpsPoints do
+                self.dpsPoints[i] = nil
             end
             -- Enhance with critical hit data
             self:EnhancePointsWithCritData(self.dpsPoints, addon.DamageAccumulator)
         else
-            self.dpsPoints = {}
+            -- Clear existing array without creating new table
+            for i = #self.dpsPoints, 1, -1 do
+                self.dpsPoints[i] = nil
+            end
         end
-        self.hpsPoints = {}  -- Empty for DPS plot
+        -- Clear HPS data for DPS plot
+        for i = #self.hpsPoints, 1, -1 do
+            self.hpsPoints[i] = nil
+        end
     else
         -- HPS plot
         if addon.HealingAccumulator and addon.HealingAccumulator.rollingData then
             local rawData = addon.HealingAccumulator:GetTimeSeriesData(startTime, now, 1)
-            -- Convert raw totals to rates (healing per second)
-            self.hpsPoints = {}
-            for _, point in ipairs(rawData) do
-                table.insert(self.hpsPoints, {
-                    time = point.time,
-                    value = point.value  -- For 1-second buckets, total = rate
-                })
+            -- Reuse existing array, update values in-place
+            local pointCount = #rawData
+            for i = 1, pointCount do
+                local point = self.hpsPoints[i]
+                if point then
+                    -- Update existing point (no allocation)
+                    point.time = rawData[i].time
+                    point.value = rawData[i].value
+                else
+                    -- Only create if array is growing
+                    self.hpsPoints[i] = {
+                        time = rawData[i].time,
+                        value = rawData[i].value
+                    }
+                end
+            end
+            -- Trim array if it shrank
+            for i = pointCount + 1, #self.hpsPoints do
+                self.hpsPoints[i] = nil
             end
             -- Enhance with critical hit data
             self:EnhancePointsWithCritData(self.hpsPoints, addon.HealingAccumulator)
         else
-            self.hpsPoints = {}
+            -- Clear existing array without creating new table
+            for i = #self.hpsPoints, 1, -1 do
+                self.hpsPoints[i] = nil
+            end
         end
-        self.dpsPoints = {}  -- Empty for HPS plot
+        -- Clear DPS data for HPS plot
+        for i = #self.dpsPoints, 1, -1 do
+            self.dpsPoints[i] = nil
+        end
     end
     
     -- Ensure both lines have baseline data for visibility
@@ -281,54 +321,68 @@ function MetricsPlot:EnhancePointsWithCritData(points, accumulator)
     end
 end
 
--- Ensure both DPS and HPS have baseline data points for visibility
+-- Ensure both DPS and HPS have baseline data points for visibility (optimized)
 function MetricsPlot:EnsureBaselineData(startTime, endTime)
+    -- Pre-calculate number of points needed
+    local numPoints = math.floor((endTime - startTime) / self.config.sampleRate) + 1
+    
     -- If DPS has no data, create baseline zero points
     if #self.dpsPoints == 0 then
-        self.dpsPoints = {}
         local currentTime = startTime
-        while currentTime <= endTime do
-            table.insert(self.dpsPoints, {
-                time = currentTime,
-                value = 0
-            })
+        for i = 1, numPoints do
+            self.dpsPoints[i] = self.dpsPoints[i] or {}
+            self.dpsPoints[i].time = currentTime
+            self.dpsPoints[i].value = 0
             currentTime = currentTime + self.config.sampleRate
         end
     end
     
     -- If HPS has no data, create baseline zero points
     if #self.hpsPoints == 0 then
-        self.hpsPoints = {}
         local currentTime = startTime
-        while currentTime <= endTime do
-            table.insert(self.hpsPoints, {
-                time = currentTime,
-                value = 0
-            })
+        for i = 1, numPoints do
+            self.hpsPoints[i] = self.hpsPoints[i] or {}
+            self.hpsPoints[i].time = currentTime
+            self.hpsPoints[i].value = 0
             currentTime = currentTime + self.config.sampleRate
         end
     end
 end
 
--- Collect values from plot data
+-- Collect values from plot data (optimized with pre-allocated arrays)
 function MetricsPlot:CollectPlotValues()
-    local dpsValues = {}
-    local hpsValues = {}
+    -- Reuse cached arrays if they exist
+    self._dpsValuesCache = self._dpsValuesCache or {}
+    self._hpsValuesCache = self._hpsValuesCache or {}
+    
+    -- Clear arrays by setting count to 0 (keep memory allocated)
+    local dpsCount = 0
+    local hpsCount = 0
     
     -- Collect all values from current data
     for _, point in ipairs(self.dpsPoints) do
         if point.value > 0 then
-            table.insert(dpsValues, point.value)
+            dpsCount = dpsCount + 1
+            self._dpsValuesCache[dpsCount] = point.value
         end
     end
     
     for _, point in ipairs(self.hpsPoints) do
         if point.value > 0 then
-            table.insert(hpsValues, point.value)
+            hpsCount = hpsCount + 1
+            self._hpsValuesCache[hpsCount] = point.value
         end
     end
     
-    return dpsValues, hpsValues
+    -- Clear unused entries
+    for i = dpsCount + 1, #self._dpsValuesCache do
+        self._dpsValuesCache[i] = nil
+    end
+    for i = hpsCount + 1, #self._hpsValuesCache do
+        self._hpsValuesCache[i] = nil
+    end
+    
+    return self._dpsValuesCache, self._hpsValuesCache
 end
 
 -- Get maximum value from a points array (helper for debugging)

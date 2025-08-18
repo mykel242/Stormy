@@ -473,6 +473,22 @@ SlashCmdList["STORMY"] = function(msg)
             print("[STORMY] Usage: /stormy plotoutliers <on|off>")
             print("Shows visual indicators for bars that exceed 2x the scale value")
         end
+    elseif command == "perfstats" or command == "performance" then
+        -- Toggle performance statistics tracking
+        addon.db.profile.debugMode = not addon.db.profile.debugMode
+        if addon.db.profile.debugMode then
+            print("[STORMY] Performance tracking ENABLED - Statistics will be printed every 100 frames")
+            print("[STORMY] Tracking: Texture pool hit rate, memory allocations, frame times")
+            -- Force immediate report
+            if addon.DPSPlot and addon.DPSPlot.perfStats then
+                addon.DPSPlot.perfStats.frameCount = 99  -- Next frame will trigger report
+            end
+            if addon.HPSPlot and addon.HPSPlot.perfStats then
+                addon.HPSPlot.perfStats.frameCount = 99
+            end
+        else
+            print("[STORMY] Performance tracking DISABLED")
+        end
     else
         print("STORMY Commands:")
         print("  /stormy dps - Toggle DPS meter")
@@ -484,6 +500,7 @@ SlashCmdList["STORMY"] = function(msg)
         print("  /stormy poolstats - Show pool statistics")
         print("  /stormy plotscale <mode> - Set plot scaling (max|95th|90th|85th)")
         print("  /stormy plotoutliers <on|off> - Toggle outlier indicators")
+        print("  /stormy perfstats - Toggle performance tracking (texture pool, frame stats)")
         print("  /stormy version - Show version")
     end
 end
