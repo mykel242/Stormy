@@ -21,6 +21,22 @@ local SCALE_DOWN_THRESHOLD = 0.5    -- Scale down when value is less than 50% of
 local TRANSITION_DURATION = 0.5     -- Animation duration for outlier transitions
 local OUTLIER_CLEANUP_TIME = 5.0    -- Clean up old transitions after 5 seconds
 
+-- Pre-allocated color constants (no allocations in hot path)
+local COLOR_CACHE = {
+    DPS_NORMAL = {1, 0, 0, 1},
+    HPS_NORMAL = {0.2, 1, 0.2, 1},
+    DPS_OUTLIER = {1, 1, 0, 1},
+    HPS_OUTLIER = {0, 1, 1, 1},
+    DPS_HOVER = {255/255, 192/255, 46/255, 1},
+    HPS_HOVER = {40/255, 190/255, 250/255, 1},
+    WHITE = {1, 1, 1, 1},
+    WORK = {0, 0, 0, 0}  -- Reusable work color for dimming
+}
+
+-- Texture pool configuration
+local TEXTURE_POOL_INITIAL = 100    -- Pre-create this many textures
+local TEXTURE_POOL_MAX = 300        -- Maximum pool size
+
 -- Plot configuration
 local PLOT_CONFIG = {
     -- Window dimensions
@@ -107,7 +123,19 @@ function MetricsPlot:New(plotType)
         
         -- Texture management
         texturePool = {},
-        usedTextures = {},
+        activeTextures = {},
+        poolSize = 0,
+        maxPoolSize = TEXTURE_POOL_MAX,
+        
+        -- Performance tracking
+        perfStats = {
+            texturesCreated = 0,
+            texturesReused = 0,
+            poolHits = 0,
+            poolMisses = 0,
+            frameCount = 0,
+            lastReport = 0
+        },
         
         -- Timing
         lastUpdate = 0,
@@ -467,26 +495,114 @@ function MetricsPlot:RoundToNiceScale(value)
 end
 
 -- =============================================================================
--- TEXTURE MANAGEMENT
+-- TEXTURE MANAGEMENT (OPTIMIZED WITH POOLING)
 -- =============================================================================
 
--- Create new texture each time (no pooling to avoid flicker)
-function MetricsPlot:GetTexture()
-    local texture = self.plotFrame:CreateTexture(nil, "ARTWORK")
-    -- Set a solid color texture file
-    texture:SetTexture("Interface\\Buttons\\WHITE8X8")
+-- Initialize texture pool with pre-allocated textures
+function MetricsPlot:InitializeTexturePool()
+    if not self.plotFrame then
+        return
+    end
     
-    table.insert(self.usedTextures, texture)
+    -- Clear any existing pool
+    self.texturePool = {}
+    self.activeTextures = {}
+    self.poolSize = 0
+    
+    -- Pre-create initial batch of textures
+    for i = 1, TEXTURE_POOL_INITIAL do
+        local texture = self.plotFrame:CreateTexture(nil, "ARTWORK")
+        texture:SetTexture("Interface\\Buttons\\WHITE8X8")
+        texture:Hide()
+        table.insert(self.texturePool, texture)
+        self.poolSize = self.poolSize + 1
+    end
+    
+    -- Reset performance stats
+    self.perfStats.texturesCreated = TEXTURE_POOL_INITIAL
+end
+
+-- Get texture from pool (no allocation in hot path)
+function MetricsPlot:GetTexture()
+    local texture
+    
+    -- Try to get from pool
+    if #self.texturePool > 0 then
+        texture = table.remove(self.texturePool)  -- Pop from end (O(1))
+        self.perfStats.poolHits = self.perfStats.poolHits + 1
+        self.perfStats.texturesReused = self.perfStats.texturesReused + 1
+    else
+        -- Only create if pool is exhausted and under max
+        if self.poolSize < self.maxPoolSize then
+            texture = self.plotFrame:CreateTexture(nil, "ARTWORK")
+            texture:SetTexture("Interface\\Buttons\\WHITE8X8")
+            self.poolSize = self.poolSize + 1
+            self.perfStats.texturesCreated = self.perfStats.texturesCreated + 1
+            self.perfStats.poolMisses = self.perfStats.poolMisses + 1
+        else
+            -- Pool exhausted - degrade gracefully
+            return nil
+        end
+    end
+    
+    -- Track active texture
+    table.insert(self.activeTextures, texture)
+    texture:Show()
     return texture
 end
 
--- Destroy used textures instead of pooling to avoid flicker
+-- Return textures to pool (no deallocation)
 function MetricsPlot:ReturnTextures()
-    for _, texture in ipairs(self.usedTextures) do
+    for i = #self.activeTextures, 1, -1 do
+        local texture = self.activeTextures[i]
         texture:Hide()
-        -- Don't pool, just let it be garbage collected
+        texture:ClearAllPoints()
+        texture:SetVertexColor(1, 1, 1, 1)  -- Reset color
+        
+        -- Return to pool
+        table.insert(self.texturePool, texture)
+        self.activeTextures[i] = nil
     end
-    self.usedTextures = {}
+end
+
+-- Configure texture efficiently (avoid repeated method calls)
+function MetricsPlot:ConfigureTexture(texture, x, y, width, height, r, g, b, a)
+    texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x, y)
+    texture:SetSize(width, height)
+    texture:SetVertexColor(r or 1, g or 1, b or 1, a or 1)
+    return texture
+end
+
+-- Track and report performance metrics
+function MetricsPlot:TrackPerformance()
+    if not self.perfStats then
+        return
+    end
+    
+    self.perfStats.frameCount = self.perfStats.frameCount + 1
+    
+    -- Report every 100 frames or 10 seconds
+    local now = GetTime()
+    if self.perfStats.frameCount % 100 == 0 or (now - self.perfStats.lastReport) > 10 then
+        local hitRate = 0
+        local totalAttempts = self.perfStats.poolHits + self.perfStats.poolMisses
+        if totalAttempts > 0 then
+            hitRate = (self.perfStats.poolHits / totalAttempts) * 100
+        end
+        
+        -- Only print if debug mode is enabled
+        if addon.db and addon.db.profile and addon.db.profile.debugMode then
+            print(string.format("[STORMY Performance] Plot %s: Pool hit rate: %.1f%%, Textures: %d created, %d reused, Pool: %d/%d", 
+                  self.plotType or "?",
+                  hitRate, 
+                  self.perfStats.texturesCreated,
+                  self.perfStats.texturesReused,
+                  #self.texturePool, 
+                  self.maxPoolSize))
+        end
+        
+        self.perfStats.lastReport = now
+    end
 end
 
 -- =============================================================================
@@ -681,6 +797,23 @@ function MetricsPlot:FormatNumberHumanized(num)
     end
 end
 
+-- Get cached max value for current plot state
+function MetricsPlot:GetCachedMaxValue()
+    if self.plotState.isPaused and self.plotState.snapshot.isValid then
+        if self.plotType == "DPS" then
+            return self.plotState.snapshot.maxDPS or self.config.minScale
+        else
+            return self.plotState.snapshot.maxHPS or self.config.minScale
+        end
+    else
+        if self.plotType == "DPS" then
+            return self.maxDPS or self.config.minScale
+        else
+            return self.maxHPS or self.config.minScale
+        end
+    end
+end
+
 -- Check if a value is an outlier
 function MetricsPlot:IsOutlier(value, scaleValue)
     -- Only consider values that significantly exceed the scale as outliers
@@ -697,34 +830,29 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
     
     -- Validate color parameter
     if not color or type(color) ~= "table" or #color < 4 then
-        color = {1, 1, 1, 1}  -- Default to white if color is invalid
+        color = COLOR_CACHE.WHITE  -- Use pre-allocated white
     end
     
+    -- Cache all calculations outside the loop
     local plotWidth = self.config.width - 60
-    local plotHeight = self.config.height - 25  -- Account for title bar (15px) + margins (10px)
-    local barWidth = plotWidth / self.config.timeWindow  -- Width per second
+    local plotHeight = self.config.height - 25
+    local barWidth = plotWidth / self.config.timeWindow
+    local barRenderWidth = math.max(1, barWidth * 0.8)  -- Pre-calculate bar width
+    local halfBarWidth = barWidth / 2  -- Pre-calculate for positioning
+    local now = GetTime()  -- Cache GetTime() once
     
     -- Track current outliers for transition detection
     local currentOutliers = {}
     
-    -- Get the selected plot type once for all bars (for performance and consistency)
-    local selectedPlotType = addon.PlotStateManager:GetSelectedPlotType()
+    -- Get the selected plot type once for all bars
+    local selectedPlotType = addon.PlotStateManager and addon.PlotStateManager:GetSelectedPlotType()
     
-    -- Use appropriate scale for this plot type
-    local maxValue
-    if self.plotState.isPaused and self.plotState.snapshot.isValid then
-        if self.plotType == "DPS" then
-            maxValue = self.plotState.snapshot.maxDPS or self.config.minScale
-        else
-            maxValue = self.plotState.snapshot.maxHPS or self.config.minScale
-        end
-    else
-        if self.plotType == "DPS" then
-            maxValue = self.maxDPS or self.config.minScale
-        else
-            maxValue = self.maxHPS or self.config.minScale
-        end
-    end
+    -- Cache max value calculation once
+    local maxValue = self:GetCachedMaxValue()
+    
+    -- Pre-select color sets based on plot type
+    local outlierColor = self.plotType == "DPS" and COLOR_CACHE.DPS_OUTLIER or COLOR_CACHE.HPS_OUTLIER
+    local hoverColor = self.plotType == "DPS" and COLOR_CACHE.DPS_HOVER or COLOR_CACHE.HPS_HOVER
     
     for i, point in ipairs(points) do
         -- Validate point data
@@ -791,55 +919,47 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
                 isHovered = (pointTime == hoveredTime)
             end
             
-            -- Determine bar color based on state
-            local barColor = {color[1], color[2], color[3], color[4]}
-            local transitionAlpha = 1.0
-            local pulseEffect = 0
+            -- Determine bar color based on state (use pre-allocated colors)
+            local barColor = color  -- Default to input color
+            local needsDimming = false
             
-            -- Override color for outliers
-            if isOutlier then
-                -- Use outlier colors for the entire bar
-                if self.plotType == "DPS" then
-                    barColor = {1, 1, 0, 1}  -- Yellow for DPS outliers
-                else
-                    barColor = {0, 1, 1, 1}  -- Cyan for HPS outliers
+            -- Check if hover takes precedence
+            if isHovered then
+                barColor = hoverColor  -- Pre-selected hover color
+            elseif isOutlier then
+                barColor = outlierColor  -- Pre-selected outlier color
+            elseif self.plotState.selectedBar then
+                -- Check if bar needs dimming
+                if selectedPlotType ~= self.plotType or 
+                   (not isSelected and selectedPlotType == self.plotType) then
+                    needsDimming = true
                 end
-                
-                -- Apply transition effects for new outliers
-                local transition = self.outlierTransitions[timeKey]
-                if transition and transition.type == "becoming_outlier" then
-                    local elapsed = GetTime() - transition.startTime
-                    local progress = math.min(elapsed / transition.duration, 1)
-                    transitionAlpha = progress  -- Fade in
-                    
-                    -- Add pulse effect for new outliers
-                    if progress < 1 then
-                        pulseEffect = math.sin(progress * math.pi * 4) * 0.2  -- Pulse 2 times
-                    end
-                end
-                
-                -- Apply transition alpha to outlier color
-                barColor[4] = transitionAlpha + pulseEffect
             end
             
-            -- Apply hover highlighting (takes precedence over other effects)
-            if isHovered then
-                -- Use tracking colors for hover highlight
-                if self.plotType == "DPS" then
-                    barColor = {255/255, 192/255, 46/255, 1}  -- Orange for DPS hover
-                else
-                    barColor = {40/255, 190/255, 250/255, 1}  -- Light blue for HPS hover
+            -- Handle dimming by using work color
+            local r, g, b, a = barColor[1], barColor[2], barColor[3], barColor[4]
+            if needsDimming then
+                -- Use work color for dimmed values
+                COLOR_CACHE.WORK[1] = r * 0.5
+                COLOR_CACHE.WORK[2] = g * 0.5
+                COLOR_CACHE.WORK[3] = b * 0.5
+                COLOR_CACHE.WORK[4] = a
+                r, g, b, a = COLOR_CACHE.WORK[1], COLOR_CACHE.WORK[2], COLOR_CACHE.WORK[3], COLOR_CACHE.WORK[4]
+            end
+            
+            -- Handle outlier transitions efficiently
+            if isOutlier then
+                local transition = self.outlierTransitions[timeKey]
+                if transition and transition.type == "becoming_outlier" then
+                    local elapsed = now - transition.startTime  -- Use cached 'now'
+                    local progress = math.min(elapsed / TRANSITION_DURATION, 1)
+                    
+                    -- Modify alpha for transition
+                    if progress < 1 then
+                        local pulseEffect = math.sin(progress * math.pi * 4) * 0.2
+                        a = progress + pulseEffect
+                    end
                 end
-            elseif self.plotState.selectedBar and selectedPlotType ~= self.plotType then
-                -- Dim all bars in non-selected plot types
-                barColor[1] = barColor[1] * 0.5
-                barColor[2] = barColor[2] * 0.5
-                barColor[3] = barColor[3] * 0.5
-            elseif not isSelected and self.plotState.selectedBar and selectedPlotType == self.plotType then
-                -- Dim unselected bars in the selected plot type
-                barColor[1] = barColor[1] * 0.5
-                barColor[2] = barColor[2] * 0.5
-                barColor[3] = barColor[3] * 0.5
             end
             
             -- Remove special 10-second boundary coloring since we use those colors for hover now
@@ -850,32 +970,36 @@ function MetricsPlot:DrawBars(points, color, baselineOffset)
             if shouldGlow then
                 -- Draw glow layer behind the bar
                 local glowTexture = self:GetTexture()
-                -- Clamp glow colors to valid range [0, 1]
-                local glowR = math.min(1, (barColor[1] or 1) * 1.5)
-                local glowG = math.min(1, (barColor[2] or 1) * 1.5)
-                local glowB = math.min(1, (barColor[3] or 1) * 1.5)
-                glowTexture:SetVertexColor(glowR, glowG, glowB, glowIntensity or 0.4)
-                glowTexture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", 
-                                   x - barWidth * 0.6, yBottom - 2)
-                glowTexture:SetSize(barWidth * 1.2, (yTop - yBottom) + 4)
-                glowTexture:Show()
+                if glowTexture then
+                    -- Clamp glow colors to valid range [0, 1]
+                    local glowR = math.min(1, r * 1.5)
+                    local glowG = math.min(1, g * 1.5)
+                    local glowB = math.min(1, b * 1.5)
+                    self:ConfigureTexture(glowTexture,
+                        x - barWidth * 0.6, yBottom - 2,
+                        barWidth * 1.2, (yTop - yBottom) + 4,
+                        glowR, glowG, glowB, glowIntensity or 0.4)
+                end
             end
             
             -- Draw main vertical bar
             local texture = self:GetTexture()
-            -- Ensure all color values are valid
-            texture:SetVertexColor(barColor[1] or 1, barColor[2] or 0, barColor[3] or 0, barColor[4] or 1)
-            texture:SetPoint("BOTTOMLEFT", self.plotFrame, "BOTTOMLEFT", x - barWidth/2, yBottom)
-            texture:SetSize(math.max(1, barWidth * 0.8), yTop - yBottom)  -- 80% width with gaps
-            texture:Show()
+            if texture then
+                self:ConfigureTexture(texture,
+                    x - halfBarWidth, yBottom,
+                    barRenderWidth, yTop - yBottom,
+                    r, g, b, a)
+            else
+                -- Pool exhausted - stop rendering
+                break
+            end
         end
     end
     
     -- Update previous outliers for next frame's transition detection
     self.previousOutliers = currentOutliers
     
-    -- Clean up old transition entries to prevent memory leak
-    local now = GetTime()
+    -- Clean up old transition entries to prevent memory leak (use cached 'now')
     for timeKey, transition in pairs(self.outlierTransitions) do
         local elapsed = now - transition.startTime
         if elapsed > OUTLIER_CLEANUP_TIME then
@@ -909,8 +1033,8 @@ function MetricsPlot:Render()
         return
     end
     
-    -- Render with current plot state
-    
+    -- Track performance metrics
+    self:TrackPerformance()
     
     -- Clear previous textures
     self:ReturnTextures()
@@ -1204,6 +1328,9 @@ function MetricsPlot:CreateWindow()
     end)
     
     -- Title removed for cleaner look
+    
+    -- Initialize texture pool after plot frame is created
+    self:InitializeTexturePool()
     
     self.frame:Hide()
 end
@@ -1714,6 +1841,8 @@ end
 function MetricsPlot:Initialize()
     -- Create window but don't show it
     self:CreateWindow()
+    
+    -- Texture pool is initialized in CreateWindow
     
     -- MetricsPlot initialized
 end
